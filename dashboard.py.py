@@ -278,17 +278,28 @@ def generate_layman_analysis(df, fund, pred_price):
     
     return analysis, ai_msg
 
-# --- 3. 核心資料載入 ---
+# --- 3. 核心資料載入 (修復：雙重後綴與表格類型問題) ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
+    # 1. 定義嘗試抓取的 "完整代碼" 清單
     tickers_to_try = []
+    
+    # 強制將輸入轉為大寫並去除前後空白
+    clean_input = stock_code.strip().upper()
+
     if is_tw:
-        tickers_to_try = [f"{stock_code}.TW", f"{stock_code}.TWO"]
+        # 台股：先移除可能存在的 .TW 或 .TWO，確保乾淨後再添加
+        base_code = clean_input.replace(".TW", "").replace(".TWO", "")
+        tickers_to_try = [f"{base_code}.TW", f"{base_code}.TWO"]
     elif "港股" in market_type:
-        hk_code = stock_code.zfill(4)
+        # 港股：先移除 .HK
+        base_code = clean_input.replace(".HK", "")
+        # 補零至 4 位數
+        hk_code = base_code.zfill(4)
         tickers_to_try = [f"{hk_code}.HK"]
     else:
-        tickers_to_try = [stock_code]
+        # 美股：直接使用 (通常沒有後綴)
+        tickers_to_try = [clean_input]
 
     ticker = None
     history = pd.DataFrame()
@@ -605,11 +616,20 @@ if stock_input:
         with col_f1:
             st.subheader("📋 關鍵財務數據")
             fund = data['fund']
+            
+            # 使用 DataFrame 展示表格 (修正型別錯誤)
             f_data = {
                 "指標": ["本益比 (P/E)", "預估本益比 (Fwd P/E)", "股價淨值比 (P/B)", "股東權益報酬率 (ROE)", "分析師目標價"],
-                "數值": [fund['PE'], fund['ForwardPE'], fund['PB'], f"{fund['ROE']*100:.2f}%" if isinstance(fund['ROE'], float) else 'N/A', fund['TargetPrice']]
+                "數值": [
+                    str(fund['PE']), 
+                    str(fund['ForwardPE']), 
+                    str(fund['PB']), 
+                    f"{fund['ROE']*100:.2f}%" if isinstance(fund['ROE'], float) else 'N/A',
+                    str(fund['TargetPrice'])
+                ]
             }
-            st.dataframe(pd.DataFrame(f_data), hide_index=True, use_container_width=True)
+            # 強制將資料轉為 string 以避免 PyArrow 錯誤
+            st.dataframe(pd.DataFrame(f_data).astype(str), hide_index=True, use_container_width=True)
 
         with col_f2:
             st.subheader("🐳 籌碼面/法人邏輯 (Lite)")
