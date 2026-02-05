@@ -324,7 +324,7 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **功能更新**：\n1. AI 綜合白話分析\n2. 恢復 K 線圖時間篩選 (Range Slider)\n3. 新聞依時間排序")
+st.sidebar.info("💡 **功能更新**：\n1. AI 綜合白話分析\n2. K 線圖新增現價線 & 右側座標\n3. 新聞依時間排序")
 
 # --- 5. 主程式 ---
 if stock_input:
@@ -409,22 +409,40 @@ if stock_input:
     tab1, tab2, tab3 = st.tabs(["📊 深度技術分析", "📰 智能新聞解析", "💰 籌碼與基本面"])
 
     with tab1:
+        # 繪圖
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
+        
+        # K線
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="股價"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name="月線"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name="季線"), row=1, col=1)
+        
+        # 成交量
         colors = ['red' if r['Open'] < r['Close'] else 'green' for i, r in df.iterrows()]
         fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name="成交量"), row=2, col=1)
         
-        # --- 修正：恢復時間軸篩選器 (Range Slider & Selector) ---
+        # --- 優化 1：顯示現價線 ---
+        last_close = df['Close'].iloc[-1]
+        fig.add_hline(
+            y=last_close, 
+            line_dash="dash", 
+            line_color="#FACC15", # 亮黃色
+            row=1, col=1,
+            annotation_text=f"現價: {last_close:.2f}",
+            annotation_position="top right",
+            annotation_font=dict(color="#FACC15", size=12)
+        )
+
+        # --- 優化 2：優化版面與十字游標 ---
         fig.update_layout(
             height=600, 
             template="plotly_dark",
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
             margin=dict(l=0, r=0, t=30, b=0),
+            hovermode='x unified', # 統一顯示資訊
             xaxis=dict(
-                rangeslider=dict(visible=True), # 顯示底部拖拉條
+                rangeslider=dict(visible=True), 
                 rangeselector=dict(
                     buttons=list([
                         dict(count=1, label="1月", step="month", stepmode="backward"),
@@ -438,6 +456,12 @@ if stock_input:
                     font=dict(color="white")
                 ),
                 type="date"
+            ),
+            yaxis=dict(
+                title="價格",
+                showgrid=True,
+                zeroline=False,
+                side="right" # 將價格軸移到右側，更符合看盤習慣
             )
         )
         st.plotly_chart(fig, use_container_width=True)
