@@ -15,7 +15,7 @@ st.set_page_config(page_title="全球股市 AI 戰情室", layout="wide")
 # --- 2. 左側邊欄：設定 ---
 st.sidebar.title("🔍 戰情控制室")
 
-# 市場選擇 (新增)
+# 市場選擇
 market_type = st.sidebar.selectbox(
     "選擇市場", 
     ["🇹🇼 台股", "🇭🇰 港股", "🇺🇸 美股"],
@@ -23,19 +23,30 @@ market_type = st.sidebar.selectbox(
     key="market_selector"
 )
 
-# 輸入框
-default_code = "2603" if market_type == "🇹🇼 台股" else "9988" if market_type == "🇭🇰 港股" else "NVDA"
+# 根據市場預設代碼
+default_code = "2603"
+if market_type == "🇭🇰 港股":
+    default_code = "9988" # 阿里巴巴
+elif market_type == "🇺🇸 美股":
+    default_code = "NVDA" # 輝達
+
 stock_code = st.sidebar.text_input("輸入股票代碼", default_code, key="sidebar_stock_code") 
 
 # 自動處理代碼後綴
+is_tw_stock = False
 if "台股" in market_type:
     full_code = f"{stock_code}.TW"
     is_tw_stock = True
 elif "港股" in market_type:
-    full_code = f"{stock_code}.HK"
+    # 港股自動補0 (如輸入 700 -> 0700.HK)
+    if len(stock_code) < 4:
+        clean_code = stock_code.zfill(4)
+    else:
+        clean_code = stock_code
+    full_code = f"{clean_code}.HK"
     is_tw_stock = False
 else:
-    full_code = stock_code # 美股通常不用後綴
+    full_code = stock_code # 美股
     is_tw_stock = False
 
 # 日期區間篩選
@@ -61,7 +72,7 @@ def load_comprehensive_data(raw_code, yf_code, is_taiwan):
     stock_name = raw_code
     industry = "未知產業"
     
-    # 只在台股時使用 twstock，避免港美股報錯
+    # 只在台股時使用 twstock
     if is_taiwan:
         try:
             if raw_code in twstock.codes:
@@ -171,27 +182,26 @@ def load_comprehensive_data(raw_code, yf_code, is_taiwan):
     except:
         pass
 
-    # 時間格式
+    # 時間格式 (統一轉為台北時間)
     last_time = df.index[-1]
-    # 統一轉為台北時間顯示 (港股與台股時區相同，美股則換算為台灣時間)
     if last_time.tzinfo is None:
         tz = pytz.timezone('Asia/Taipei')
         last_time = last_time.replace(tzinfo=pytz.utc).astimezone(tz)
     else:
         last_time = last_time.astimezone(pytz.timezone('Asia/Taipei'))
-    update_time = last_time.strftime('%Y-%m-%d %H:%M')
+    up_time = last_time.strftime('%Y-%m-%d %H:%M')
 
-    return df, stock_name, prediction, news, update_time, financials, balance_sheet, global_data, industry
+    return df, stock_name, prediction, news, up_time, financials, balance_sheet, global_data, industry
 
 # --- 4. 主程式執行 ---
 
 with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded=True) as status:
-    # 傳入 is_taiwan 參數以區分邏輯
+    # 傳入 is_taiwan 參數
     data = load_comprehensive_data(stock_code, full_code, is_tw_stock)
     
     if data[0] is None:
         status.update(label="❌ 查無資料", state="error")
-        st.error(f"找不到代碼 {stock_code}，請確認代碼與市場選擇是否正確。")
+        st.error(f"找不到代碼 {full_code}，請確認代碼與市場選擇是否正確。")
         st.stop()
         
     df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, industry = data
@@ -211,13 +221,13 @@ low_price = last_row['Low']
 diff = curr_price - prev_row['Close']
 pct = (diff / prev_row['Close']) * 100
 
-# 台股/亞股配色邏輯 (紅漲綠跌)
+# 配色邏輯
 if diff > 0:
-    main_color = "#e11d48" # 亮紅
+    main_color = "#e11d48" # 紅
     bg_color = "rgba(225, 29, 72, 0.1)"
     arrow = "▲"
 elif diff < 0:
-    main_color = "#10b981" # 亮綠
+    main_color = "#10b981" # 綠
     bg_color = "rgba(16, 185, 129, 0.1)"
     arrow = "▼"
 else:
@@ -231,34 +241,20 @@ vol_ma = last_row['VolMA20']
 pred_diff = pred_price - curr_price
 pred_pct = (pred_diff / curr_price) * 100
 
-# --- 6. 🏆 置頂大看板 (HTML 實作) ---
+# --- 6. 🏆 置頂大看板 (修復 HTML 顯示錯誤) ---
 st.title(f"📊 {name} ({stock_code})")
 
-# 使用 HTML 製作超大報價看板
-# 修正 NameError: 使用 up_time 而非 update_time
+# 注意：這裡去除了不必要的縮排，以避免 Streamlit 將其誤判為程式碼區塊
 st.markdown(f"""
-<div style="
-    background-color: {bg_color};
-    padding: 20px;
-    border-radius: 10px;
-    margin-bottom: 25px;
-    border: 2px solid {main_color};
-    text-align: center;">
-    
-    <span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">目前成交價</span>
-    <h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">
-        {curr_price:.2f}
-    </h1>
-    <h2 style="color: {main_color}; margin: 0; font-size: 2rem;">
-        {arrow} {abs(diff):.2f} ({abs(pct):.2f}%)
-    </h2>
-    <p style="color: #6b7280; font-size: 0.9rem; margin-top: 10px;">
-        🕒 資料時間: {up_time} | 昨收: {prev_row['Close']:.2f}
-    </p>
+<div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; margin-bottom: 25px; border: 2px solid {main_color}; text-align: center;">
+<span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">目前成交價</span>
+<h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">{curr_price:.2f}</h1>
+<h2 style="color: {main_color}; margin: 0; font-size: 2rem;">{arrow} {abs(diff):.2f} ({abs(pct):.2f}%)</h2>
+<p style="color: #6b7280; font-size: 0.9rem; margin-top: 10px;">🕒 資料時間: {up_time} | 昨收: {prev_row['Close']:.2f}</p>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 詳細行情數據 (OHLC) ---
+# --- 7. 詳細行情數據 ---
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("開盤價", f"{open_price:.2f}")
 m2.metric("最高價", f"{high_price:.2f}")
