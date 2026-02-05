@@ -7,13 +7,14 @@ import numpy as np
 from xgboost import XGBRegressor
 from datetime import datetime, timedelta
 import pytz
+import twstock # 引入台灣股市套件 (專門解決名稱問題)
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="台股 AI 旗艦分析系統 (教學版)", layout="wide")
+st.set_page_config(page_title="台股 AI 旗艦分析系統 (中文增強版)", layout="wide")
 
 # --- 2. 左側邊欄：設定 ---
 st.sidebar.title("🔍 戰情控制室")
-stock_code = st.sidebar.text_input("輸入台股代碼", "2330") 
+stock_code = st.sidebar.text_input("輸入台股代碼", "2603") 
 full_code = f"{stock_code}.TW"
 
 # 日期區間篩選
@@ -33,19 +34,34 @@ st.sidebar.info("💡 **教學模式啟動中**：\n點擊各個圖表下方的 
 
 # --- 3. 核心函數：全方位資料抓取 ---
 @st.cache_data
-def load_comprehensive_data(code):
-    ticker = yf.Ticker(code)
+def load_comprehensive_data(raw_code, yf_code):
+    # 1. 優先解決名稱問題 (使用 twstock 套件)
+    stock_name = raw_code # 預設為代碼
+    industry = "未知產業"
+    sector = "未知板塊"
     
-    # A. 基礎資料與名稱 (修復 UnboundLocalError)
+    # 嘗試從 twstock 抓取精準中文名稱
     try:
-        info = ticker.info
-        stock_name = info.get('longName') or info.get('shortName') or code
-        industry = info.get('industry', '未知產業')
-        sector = info.get('sector', '未知板塊')
+        if raw_code in twstock.codes:
+            info_tw = twstock.codes[raw_code]
+            stock_name = info_tw.name # 抓到中文名 (如：長榮)
+            industry = info_tw.type   # 抓到產業 (如：航運業)
     except:
-        stock_name = code
-        industry = sector = "N/A"
-        info = {} # <--- 關鍵修復：定義空字典，防止變數未宣告錯誤
+        pass
+
+    # 2. 透過 yfinance 抓取數據
+    ticker = yf.Ticker(yf_code)
+    
+    # 補充 yfinance 的資訊 (若 twstock 沒抓到，嘗試用 yfinance 補救)
+    try:
+        info_yf = ticker.info
+        if stock_name == raw_code: # 如果上面沒抓到中文名
+            stock_name = info_yf.get('longName') or info_yf.get('shortName') or raw_code
+        if industry == "未知產業":
+            industry = info_yf.get('industry', 'N/A')
+            sector = info_yf.get('sector', 'N/A')
+    except:
+        info_yf = {}
     
     # B. 歷史股價 (技術面)
     df = ticker.history(start="2019-01-01")
@@ -90,7 +106,7 @@ def load_comprehensive_data(code):
     except:
         news = []
 
-    # 防呆機制：若無數據，回傳 9 個 None (修復數量不符錯誤)
+    # 防呆機制：若無數據，回傳 None
     if df.empty:
         return None, None, None, None, None, None, None, None, None
 
@@ -98,8 +114,6 @@ def load_comprehensive_data(code):
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
-    
-    # 成交量均線
     df['VolMA20'] = df['Volume'].rolling(window=20).mean()
     
     # RSI
@@ -120,10 +134,10 @@ def load_comprehensive_data(code):
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
     # --- F. AI 預測 ---
-    prediction = df['Close'].iloc[-1] # 預設值
+    prediction = df['Close'].iloc[-1]
     try:
         df_clean = df.dropna().copy()
-        if len(df_clean) > 30: # 確保有足夠資料才訓練
+        if len(df_clean) > 30:
             features = ['Open', 'High', 'Low', 'Close', 'Volume', 'MA5', 'MA20', 'RSI', 'K', 'D', 'OBV']
             X = df_clean[features]
             y = df_clean['Close'].shift(-1).dropna()
@@ -132,7 +146,7 @@ def load_comprehensive_data(code):
             model.fit(X[:-1], y)
             prediction = model.predict(X.tail(1))[0]
     except:
-        pass # 若預測失敗，保持使用最新收盤價
+        pass
 
     # 時間格式
     last_time = df.index[-1]
@@ -143,26 +157,25 @@ def load_comprehensive_data(code):
         last_time = last_time.astimezone(pytz.timezone('Asia/Taipei'))
     update_time = last_time.strftime('%Y-%m-%d %H:%M')
 
-    return df, stock_name, prediction, news, update_time, financials, balance_sheet, global_data, info
+    return df, stock_name, prediction, news, update_time, financials, balance_sheet, global_data, industry
 
 # --- 4. 主程式執行 ---
 
 with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded=True) as status:
-    # 呼叫函數並接收 9 個回傳值
-    data = load_comprehensive_data(full_code)
+    # 傳入 原始代碼(給twstock用) 和 完整代碼(給yfinance用)
+    data = load_comprehensive_data(stock_code, full_code)
     
-    # 檢查是否為 None (代表抓取失敗)
     if data[0] is None:
         status.update(label="❌ 查無資料", state="error")
         st.error(f"找不到代碼 {stock_code}，請確認是否為上市櫃股票。")
         st.stop()
         
-    df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, info = data
+    df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, industry = data
     status.update(label=f"✅ {name} 分析報告生成完畢！", state="complete", expanded=False)
 
 # --- 5. 儀表板頭部 ---
 st.title(f"📊 {name} ({stock_code}) 投資戰情室")
-st.caption(f"🕒 最後更新：{up_time} | 🏢 產業：{info.get('sector','-')} / {info.get('industry','-')}")
+st.caption(f"🕒 最後更新：{up_time} | 🏢 產業：{industry}")
 
 # 最新數據
 curr = df['Close'].iloc[-1]
@@ -179,8 +192,8 @@ c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("目前股價", f"{curr:.2f}", f"{diff:.2f} ({pct:.2f}%)")
 c2.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)")
 c3.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K")
-c4.metric("本益比 (PE)", f"{info.get('trailingPE', 'N/A')}")
-c5.metric("殖利率", f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "N/A")
+c4.metric("RSI 強弱", f"{df['RSI'].iloc[-1]:.1f}")
+c5.metric("KD 指標", f"K: {df['K'].iloc[-1]:.0f}")
 
 # --- 6. 多分頁分析區 ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -193,13 +206,11 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 # === Tab 1: 技術分析 ===
 with tab1:
-    # 篩選日期
     days_map = {"近 3 個月": 90, "近 6 個月": 180, "近 1 年": 365, "近 3 年": 1095, "全部": 9999}
     start_dt = datetime.now(pytz.timezone('Asia/Taipei')) - timedelta(days=days_map[date_option])
     if df.index.tzinfo is None: df.index = df.index.tz_localize("Asia/Taipei")
     df_view = df[df.index >= start_dt] if date_option != "全部" else df
 
-    # AI 解讀
     st.subheader("🤖 AI 趨勢解讀")
     col_ai1, col_ai2 = st.columns([2, 1])
     with col_ai1:
@@ -213,7 +224,6 @@ with tab1:
         elif k > 80: st.write("🔥 KD 指標：**高檔過熱**")
         else: st.write("⚖️ KD 指標：**中性整理**")
 
-    # 繪圖
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
     fig.add_trace(go.Candlestick(x=df_view.index, open=df_view['Open'], high=df_view['High'], low=df_view['Low'], close=df_view['Close'], name="K線"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA20'], name="月線 (20MA)", line=dict(color='orange')), row=1, col=1)
@@ -227,27 +237,16 @@ with tab1:
     fig.update_layout(height=1000, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 🎓 技術指標教學區 ---
     with st.expander("🎓 小學堂：圖表看不懂？點這裡學看盤！", expanded=False):
         st.markdown("""
-        ### 1. 移動平均線 (MA - Moving Average)
-        * **這是什麼？** 把過去 N 天的股價加起來除以 N，代表大家的「平均成本」。
-        * **怎麼算？** $MA_n = (P_1 + P_2 + ... + P_n) / n$
-        * **怎麼看？** * **月線 (20MA, 橘線)**：短期生命線，股價在上面代表短期強勢。
-            * **季線 (60MA, 藍線)**：中期趨勢線，若跌破季線，通常代表多頭趨勢改變。
-        
-        ### 2. KD 指標 (隨機指標)
-        * **這是什麼？** 判斷目前股價是在「近期最高價」還是「近期最低價」附近。
-        * **怎麼算？** 先算出 RSV (相對位置)，再平滑運算出 K 值與 D 值。
-        * **怎麼看？**
-            * **黃金交叉**：橘線(K) 由下往上穿過 藍線(D) ➔ **買進訊號** 🟢。
-            * **死亡交叉**：橘線(K) 由上往下穿過 藍線(D) ➔ **賣出訊號** 🔴。
-        
-        ### 3. OBV (能量潮指標)
-        * **這是什麼？** 用「成交量」來判斷是真漲還是假漲。
-        * **怎麼算？** * 若今天**漲**，就把今天的量**加**進去。
-            * 若今天**跌**，就把今天的量**扣**出來。
-        * **怎麼看？** * **量價背離**：股價沒漲(或跌)，但 OBV 卻在漲 ➔ 代表主力偷偷吃貨，未來可能大漲！
+        ### 1. 移動平均線 (MA)
+        * **月線 (橘線)**：短期生命線，股價在上面代表短期強勢。
+        * **季線 (藍線)**：中期趨勢線，跌破季線通常代表趨勢轉空。
+        ### 2. KD 指標
+        * **黃金交叉**：K值由下往上穿過D值 ➔ 買進訊號 🟢。
+        * **死亡交叉**：K值由上往下穿過D值 ➔ 賣出訊號 🔴。
+        ### 3. OBV 能量潮
+        * **量價背離**：股價沒漲，但紫色 OBV 線一直在漲 ➔ 主力偷吃貨，後市看漲！
         """)
 
 # === Tab 2: 基本面財報 ===
@@ -265,12 +264,10 @@ with tab2:
             fig_fin.update_layout(yaxis=dict(title="營收"), yaxis2=dict(title="淨利", overlaying='y', side='right'), title="近年營收與獲利")
             st.plotly_chart(fig_fin, use_container_width=True)
             
-            # --- 🎓 財報教學區 ---
             with st.expander("🎓 小學堂：財報名詞解釋", expanded=False):
                 st.markdown("""
-                * **總營收 (Total Revenue)**：公司賣產品總共收到的錢（還沒扣成本）。這代表公司的**生意規模**。
-                * **淨利 (Net Income)**：扣掉所有成本、薪水、稅金後，真正賺進口袋的錢。這代表公司的**賺錢能力**。
-                * **EPS (每股盈餘)**：淨利除以股票總數。代表「你手上的每一股幫你賺了多少錢」。
+                * **總營收**：做生意的總收入。
+                * **淨利**：扣掉成本後真正賺的錢。
                 """)
         else:
             st.warning("無法解析詳細財報欄位。")
@@ -293,7 +290,6 @@ with tab3:
         for i, (name, val) in enumerate(corrs.items()):
             cols[i].metric(name, f"{val:.2f}", delta="高度連動" if val > 0.7 else None)
 
-        # 繪圖
         fig_glob = go.Figure()
         norm_base = (base_series / base_series.iloc[0]) * 100
         fig_glob.add_trace(go.Scatter(x=base_series.index, y=norm_base, name=f"{stock_code}", line=dict(color='red', width=3)))
@@ -303,24 +299,21 @@ with tab3:
             fig_glob.add_trace(go.Scatter(x=base_series.index, y=norm, name=name, line=dict(dash='dot')))
         st.plotly_chart(fig_glob, use_container_width=True)
         
-        # --- 🎓 連動性教學區 ---
-        with st.expander("🎓 小學堂：什麼是「連動係數」？", expanded=False):
+        with st.expander("🎓 小學堂：連動係數是什麼？", expanded=False):
             st.markdown("""
-            * **相關係數 (Correlation)**：一個介於 -1 到 1 之間的數字。
-            * **接近 1.0**：代表**「同進退」**。例如：美股漲，台股這支也跟著漲（如台積電 vs 費半）。
-            * **接近 0**：代表**「沒關係」**。走勢各走各的。
-            * **接近 -1.0**：代表**「唱反調」**。美股漲，這支反而跌（通常是避險資產）。
+            * **接近 1.0**：同進退（如：美股漲，這支也漲）。
+            * **接近 0**：沒關係。
+            * **接近 -1.0**：唱反調（通常是避險股）。
             """)
 
 # === Tab 4 & 5 ===
 with tab4:
     st.subheader("🏢 公司檔案")
-    st.info(f"產業：{info.get('industry','N/A')} | 員工：{info.get('fullTimeEmployees','N/A')}人")
-    st.write(info.get('longBusinessSummary', '無簡介'))
-
+    st.info(f"產業：{industry}")
+    
 with tab5:
     st.subheader(f"📰 最新消息")
     if news:
-        for n in news[:5]:
+        for n in news[:8]:
             st.markdown(f"[{n.get('title')}]({n.get('link')})")
             st.markdown("---")
