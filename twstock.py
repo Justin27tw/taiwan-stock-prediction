@@ -5,189 +5,282 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from xgboost import XGBRegressor
+from datetime import datetime, timedelta
+import pytz
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="台股 AI 隨身分析師", layout="wide")
+st.set_page_config(page_title="台股 AI 操盤手 Pro+", layout="wide")
 
-# --- 2. 左側邊欄：輸入與警語 ---
-st.sidebar.title("🔍 股票設定")
-stock_code = st.sidebar.text_input("輸入台股代碼", "2330")
+# --- 2. 左側邊欄：設定與刷新 ---
+st.sidebar.title("🔍 操盤控制台")
+stock_code = st.sidebar.text_input("輸入台股代碼", "2603") 
 full_code = f"{stock_code}.TW"
 
-st.sidebar.markdown("---")
-st.sidebar.warning(
-    "⚠️ **【免責聲明】**\n\n"
-    "本工具僅供技術研究與程式教學使用。\n"
-    "AI 預測結果與技術分析內容**不保證準確性**，"
-    "股市有風險，請勿僅依賴本程式作為買賣依據。"
+# --- 新增：日期區間篩選功能 ---
+st.sidebar.subheader("📅 檢視區間設定")
+date_option = st.sidebar.selectbox(
+    "快速選擇區間", 
+    ["近 1 個月", "近 3 個月", "近 6 個月", "近 1 年", "近 3 年", "全部", "自訂範圍"], 
+    index=2 # 預設選 6 個月，看起來最舒服
 )
 
-# --- 3. 核心函數：抓取資料與計算 ---
+start_date_filter = None
+end_date_filter = None
+
+if date_option == "自訂範圍":
+    # 讓使用者自己選日期
+    today = datetime.today()
+    start_input = st.sidebar.date_input("開始日期", today - timedelta(days=180))
+    end_input = st.sidebar.date_input("結束日期", today)
+    start_date_filter = pd.Timestamp(start_input).tz_localize("Asia/Taipei") if start_input else None
+    end_date_filter = pd.Timestamp(end_input).tz_localize("Asia/Taipei") + timedelta(days=1) if end_input else None
+else:
+    # 自動計算日期
+    days_map = {
+        "近 1 個月": 30,
+        "近 3 個月": 90,
+        "近 6 個月": 180,
+        "近 1 年": 365,
+        "近 3 年": 1095
+    }
+    if date_option != "全部":
+        # 計算開始日期 (注意時區處理)
+        start_date_filter = datetime.now(pytz.timezone('Asia/Taipei')) - timedelta(days=days_map[date_option])
+    else:
+        start_date_filter = None # 全部就不設限
+
+if st.sidebar.button("🔄 立即更新股價"):
+    st.cache_data.clear()
+    st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.info("💡 **小提醒**：\nAI 預測僅供參考，請搭配下方技術指標（如成交量、OBV）一起判斷，準確率更高。")
+
+# --- 3. 核心函數：計算指標與 AI 預測 ---
 @st.cache_data
 def load_data_and_predict(code):
-    # 建立 Ticker 物件
     ticker = yf.Ticker(code)
+    
+    # A. 嘗試抓取名稱
     try:
-        # 嘗試取得簡稱
-        stock_name = ticker.info.get('shortName') or ticker.info.get('longName') or code
+        info = ticker.info
+        stock_name = info.get('longName') or info.get('shortName') or code
     except:
         stock_name = code
     
-    # 抓取歷史數據
-    df = ticker.history(start="2020-01-01")
+    # 抓取歷史數據 (抓多一點，確保指標計算準確，之後再篩選顯示)
+    df = ticker.history(start="2018-01-01")
     
-    # 順便抓取新聞 (將資料取出，不要回傳 Ticker 物件本身)
+    # 抓取新聞
     try:
         stock_news = ticker.news
     except:
         stock_news = []
     
     if df.empty:
-        return None, None, None, None
+        return None, None, None, None, None
 
-    # --- 特徵工程 (計算指標) ---
+    # B. 基礎指標
     df['MA5'] = df['Close'].rolling(window=5).mean()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA60'] = df['Close'].rolling(window=60).mean()
+    df['MA20'] = df['Close'].rolling(window=20).mean()   
+    df['MA60'] = df['Close'].rolling(window=60).mean()   
 
+    # C. 量能指標
+    df['VolMA5'] = df['Volume'].rolling(window=5).mean()
+    df['VolMA20'] = df['Volume'].rolling(window=20).mean()
+    # OBV 能量潮
+    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+
+    # D. 震盪指標
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
+    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-    # --- XGBoost 預測模型 ---
+    # KD
+    low_min = df['Low'].rolling(window=9).min()
+    high_max = df['High'].rolling(window=9).max()
+    df['RSV'] = (df['Close'] - low_min) / (high_max - low_min) * 100
+    df['K'] = df['RSV'].ewm(com=2).mean()
+    df['D'] = df['K'].ewm(com=2).mean()
+
+    # E. XGBoost 預測模型
     df_clean = df.dropna().copy()
-    features = ['Open', 'High', 'Low', 'Close', 'Volume', 'MA5', 'MA20', 'RSI']
+    features = ['Open', 'High', 'Low', 'Close', 'Volume', 'MA5', 'MA20', 'RSI', 'K', 'D', 'OBV']
     X = df_clean[features]
     y = df_clean['Close'].shift(-1).dropna()
     
     model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=5)
     model.fit(X[:-1], y)
     
-    last_row = X.tail(1)
-    prediction = model.predict(last_row)[0]
+    prediction = model.predict(X.tail(1))[0]
 
-    # 修改回傳值：只回傳數據 (df, name, prediction, news)，不回傳物件
-    return df, stock_name, prediction, stock_news
+    # 時間處理
+    last_time = df.index[-1]
+    if last_time.tzinfo is None:
+        tz = pytz.timezone('Asia/Taipei')
+        last_time = last_time.replace(tzinfo=pytz.utc).astimezone(tz)
+    else:
+        last_time = last_time.astimezone(pytz.timezone('Asia/Taipei'))
+    update_time_str = last_time.strftime('%Y-%m-%d %H:%M')
 
-# --- 4. 主程式執行邏輯 ---
+    return df, stock_name, prediction, stock_news, update_time_str
 
-with st.status(f"正在分析 {stock_code} 的大數據...", expanded=True) as status:
-    st.write("📥 下載最新股價與基本資料...")
-    # 這裡接收的第四個參數變成了 stock_news
-    df, name, pred_price, stock_news = load_data_and_predict(full_code)
+# --- 4. 主程式邏輯 ---
+
+with st.status(f"🚀 AI 正在分析 {stock_code} 的走勢與籌碼...", expanded=True) as status:
+    df, name, pred_price, stock_news, update_time = load_data_and_predict(full_code)
     
     if df is not None:
-        st.write("🧮 計算技術指標 (RSI, MACD, 均線)...")
-        st.write("🤖 AI 模型正在進行趨勢預測...")
+        st.write("🤖 預測明日股價中...")
+        st.write("📊 計算 OBV 與主力籌碼...")
         status.update(label=f"✅ {name} 分析完成！", state="complete", expanded=False)
     else:
-        status.update(label="❌ 找不到股票", state="error")
-        st.error(f"找不到代碼 {stock_code}，請確認是否為上市櫃股票。")
+        status.update(label="❌ 讀取失敗", state="error")
+        st.error(f"找不到代碼 {stock_code}，請確認輸入正確。")
         st.stop()
 
-# --- 5. 顯示結果區 ---
+# --- 5. 資料篩選邏輯 (關鍵步驟) ---
+# 先備份完整的 df 用於計算最新數據
+df_full = df.copy()
 
-st.title(f"🚀 {name} ({stock_code}) AI 分析報告")
-
-current_price = df['Close'].iloc[-1]
-yesterday_price = df['Close'].iloc[-2]
-price_change = current_price - yesterday_price
-pct_change = (price_change / yesterday_price) * 100
-vol_change = df['Volume'].iloc[-1] / df['Volume'].iloc[-2]
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("目前股價", f"{current_price:.2f}", f"{price_change:.2f} ({pct_change:.2f}%)")
-c2.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_price - current_price:.2f}")
-c3.metric("RSI 熱度", f"{df['RSI'].iloc[-1]:.1f}")
-c4.metric("成交量變化", "放量" if vol_change > 1.2 else "縮量" if vol_change < 0.8 else "持平")
-
-# --- 6. 口語化分析引擎 ---
-st.subheader("💡 簡單白話分析 (近況與趨勢)")
-
-rsi = df['RSI'].iloc[-1]
-ma20 = df['MA20'].iloc[-1]
-ma60 = df['MA60'].iloc[-1]
-trend = ""
-rsi_status = ""
-
-# A. 判斷趨勢
-if current_price > ma20 and current_price > ma60:
-    trend = "目前股價站穩在生命線（季線）之上，整體格局偏向**多頭（上漲趨勢）**，主力做多意願強。"
-elif current_price < ma20 and current_price < ma60:
-    trend = "目前股價跌破生命線，整體格局偏向**空頭（下跌趨勢）**，上方賣壓可能比較重。"
-elif current_price > ma20 and current_price < ma60:
-    trend = "股價正在嘗試反彈，雖然站上月線，但還沒突破長期的壓力，目前處於**震盪整理**階段。"
-else:
-    trend = "股價短期回檔，跌破了月線支撐，需要觀察能否守住長期的季線，目前走勢比較**糾結**。"
-
-# B. 判斷熱度
-if rsi > 80:
-    rsi_status = "🔥 **市場過熱警告**：現在大家都在搶買，RSI 指標衝太高了，短線隨時可能會有獲利了結的賣壓，追高要小心！"
-elif rsi > 60:
-    rsi_status = "💪 **人氣很旺**：買盤力道強勁，市場氣氛樂觀，是個強勢的表現。"
-elif rsi < 20:
-    rsi_status = "🧊 **市場結凍**：跌太深了，現在大家都在恐慌拋售，RSI 進入超賣區，反而可能會有「反彈」的機會喔。"
-elif rsi < 40:
-    rsi_status = "😰 **人氣渙散**：買氣不足，市場氣氛偏弱，大家還在觀望。"
-else:
-    rsi_status = "⚖️ **冷熱適中**：目前多空雙方力道差不多，沒有明顯過熱或恐慌，股價走勢比較平穩。"
-
-# C. AI 預測解讀
-ai_gap = ((pred_price - current_price) / current_price) * 100
-if ai_gap > 1:
-    ai_msg = f"🤖 **AI 模型看法**：模型偵測到上漲訊號，預估明日有 **{ai_gap:.2f}%** 左右的潛在漲幅。"
-elif ai_gap < -1:
-    ai_msg = f"🤖 **AI 模型看法**：模型偵測到下跌風險，預估明日可能會有 **{abs(ai_gap):.2f}%** 的修正。"
-else:
-    ai_msg = "🤖 **AI 模型看法**：模型認為明日走勢**持平震盪**，可能變化不大。"
-
-with st.container():
-    st.info(f"""
-    **【趨勢解讀】** {trend}
+# 進行區間篩選 (只影響圖表顯示，不影響最新價與 AI 預測)
+if start_date_filter:
+    # 確保索引有時區資訊以便比較
+    if df.index.tzinfo is None:
+         df.index = df.index.tz_localize("Asia/Taipei")
     
-    **【市場情緒】** {rsi_status}
+    df_view = df[df.index >= start_date_filter]
     
-    {ai_msg}
-    """)
+    if end_date_filter and date_option == "自訂範圍":
+        df_view = df_view[df_view.index <= end_date_filter]
+else:
+    df_view = df
 
-# --- 7. 圖表展示 ---
-tab1, tab2 = st.tabs(["📊 互動 K 線圖", "📰 相關新聞"])
+# 如果篩選後沒資料，就顯示全部
+if df_view.empty:
+    st.warning("⚠️ 選定的日期區間沒有數據，已自動切換顯示全部資料。")
+    df_view = df
+
+# --- 6. 儀表板顯示 ---
+st.title(f"📊 {name} ({stock_code}) AI 診斷報告")
+st.caption(f"🕒 資料時間：{update_time} | ⚠️ 僅供參考，投資盈虧自負")
+
+# 使用 df_full (完整數據) 來抓取最新狀態，確保數據是最新的
+curr_close = df_full['Close'].iloc[-1]
+diff = curr_close - df_full['Close'].iloc[-2]
+pct = (diff / df_full['Close'].iloc[-2]) * 100
+vol_today = df_full['Volume'].iloc[-1]
+vol_avg = df_full['VolMA20'].iloc[-1]
+vol_ratio = vol_today / vol_avg
+
+# 預測漲跌幅計算
+pred_diff = pred_price - curr_close
+pred_pct = (pred_diff / curr_close) * 100
+
+# 頂部指標卡
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("目前股價", f"{curr_close:.2f}", f"{diff:.2f} ({pct:.2f}%)")
+c2.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)")
+c3.metric("成交量 (張)", f"{int(vol_today/1000):,}K", f"{(vol_today-vol_avg)/1000:.1f}K")
+c4.metric("OBV 能量", "⬆️ 累積中" if df_full['OBV'].iloc[-1] > df_full['OBV'].iloc[-2] else "⬇️ 流失中")
+c5.metric("KD 指標", f"K:{df_full['K'].iloc[-1]:.0f}")
+
+# --- 7. 白話文診斷室 (含 AI 解讀) ---
+st.subheader("💡 買賣訊號與 AI 觀點")
+
+# 訊號判斷邏輯 (使用最新數據)
+k = df_full['K'].iloc[-1]
+d = df_full['D'].iloc[-1]
+rsi = df_full['RSI'].iloc[-1]
+obv_trend = "上升" if df_full['OBV'].iloc[-1] > df_full['OBV'].iloc[-5] else "下降"
+signals = []
+
+if k < 20 and k > d: signals.append("🟢 **KD 黃金交叉**：在低檔出現買進訊號，反彈機會高。")
+if k > 80 and k < d: signals.append("🔴 **KD 死亡交叉**：在高檔轉弱，建議獲利了結。")
+if rsi > 75: signals.append("🔴 **RSI 過熱**：買氣太瘋狂了，小心隨時回檔。")
+if vol_ratio > 2.0 and pct > 0: signals.append("🔥 **爆量上漲**：主力帶量攻擊，行情可能還沒結束。")
+if obv_trend == "上升" and diff < 0: signals.append("✨ **量價背離 (多)**：股價跌但 OBV 在漲，代表有人在偷偷吃貨！")
+
+# 顯示區塊
+col_text1, col_text2 = st.columns([1.5, 1])
+
+with col_text1:
+    st.info("📊 **【技術面訊號】**")
+    if not signals:
+        st.write("⚖️ 目前技術指標呈現**中性**，無明顯強烈買賣訊號，建議區間操作。")
+    else:
+        for s in signals:
+            st.write(s)
+            
+    if vol_today < vol_avg * 0.6:
+        st.warning("🧊 **量能狀態**：今日量縮，市場觀望氣氛濃厚。")
+    elif vol_today > vol_avg * 1.5:
+        st.success("🚀 **量能狀態**：今日出量，市場交投熱絡。")
+
+with col_text2:
+    st.info("🤖 **【AI 預測解讀】**")
+    st.write(f"模型預測目標價：**{pred_price:.2f}**")
+    
+    if pred_pct > 1.5:
+        st.write(f"🚀 看法：**強勢看漲** (預估漲幅 +{pred_pct:.2f}%)")
+        st.write("建議：AI 認為明日動能強勁，可偏多思考。")
+    elif pred_pct > 0:
+        st.write(f"📈 看法：**小幅上漲** (預估漲幅 +{pred_pct:.2f}%)")
+        st.write("建議：趨勢溫和向上，持股續抱。")
+    elif pred_pct > -1.5:
+        st.write(f"📉 看法：**小幅震盪** (預估跌幅 {pred_pct:.2f}%)")
+        st.write("建議：可能面臨整理，多看少做。")
+    else:
+        st.write(f"🩸 看法：**顯著下跌** (預估跌幅 {pred_pct:.2f}%)")
+        st.write("建議：AI 偵測到賣壓風險，建議避險。")
+
+# --- 8. 圖表區 (使用 df_view 篩選後的資料繪圖) ---
+tab1, tab2 = st.tabs(["📈 趨勢技術圖", "📰 相關新聞"])
 
 with tab1:
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.05, row_heights=[0.7, 0.3])
+    # 建立 4 個子圖表 (K線, 成交量, KD, OBV)
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, 
+                        vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
 
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
-                                low=df['Low'], close=df['Close'], name="K線"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name="月線 (20MA)", line=dict(color='orange', width=1.5)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], name="季線 (60MA)", line=dict(color='blue', width=1.5)), row=1, col=1)
+    # 1. K線 + 均線 (使用 df_view)
+    fig.add_trace(go.Candlestick(x=df_view.index, open=df_view['Open'], high=df_view['High'], 
+                                low=df_view['Low'], close=df_view['Close'], name="K線"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA20'], name="月線", line=dict(color='orange', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA60'], name="季線", line=dict(color='blue', width=1)), row=1, col=1)
 
-    colors = ['red' if row['Open'] - row['Close'] >= 0 else 'green' for index, row in df.iterrows()]
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name="成交量"), row=2, col=1)
+    # 2. 成交量
+    colors = ['red' if row['Open'] - row['Close'] >= 0 else 'green' for index, row in df_view.iterrows()]
+    fig.add_trace(go.Bar(x=df_view.index, y=df_view['Volume'], marker_color=colors, name="成交量"), row=2, col=1)
 
-    fig.update_layout(height=600, xaxis_rangeslider_visible=False)
+    # 3. KD
+    fig.add_trace(go.Scatter(x=df_view.index, y=df_view['K'], name="K值", line=dict(color='orange')), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_view.index, y=df_view['D'], name="D值", line=dict(color='blue')), row=3, col=1)
+
+    # 4. OBV
+    fig.add_trace(go.Scatter(x=df_view.index, y=df_view['OBV'], name="OBV 能量", line=dict(color='purple', width=1.5)), row=4, col=1)
+
+    fig.update_layout(height=900, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.subheader(f"📰 {name} 最新動態")
-    # 直接使用回傳的 stock_news 列表，而不是呼叫物件
+    st.subheader(f"📰 {name} 最新消息")
     if stock_news:
-        for n in stock_news[:5]:
-            # 處理時間格式，防止報錯
+        for n in stock_news[:10]:
             try:
                 pub_time = pd.to_datetime(n.get('providerPublishTime'), unit='s').strftime('%Y-%m-%d %H:%M')
             except:
                 pub_time = "未知時間"
-                
-            st.markdown(f"**[{n.get('title', '無標題')}]({n.get('link', '#')})**")
-            st.caption(f"發布時間: {pub_time} | 來源: {n.get('publisher', '未知')}")
-            st.divider()
+            
+            st.markdown(f"> **[{n.get('title', '無標題')}]({n.get('link', '#')})** \n> *{pub_time}* | {n.get('publisher', 'Yahoo Finance')}")
+            st.markdown("---")
     else:
-        st.write("目前沒有抓取到相關新聞。")
+        st.write("⚠️ 暫無新聞")
