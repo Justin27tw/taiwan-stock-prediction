@@ -74,6 +74,14 @@ def local_css():
             font-weight: bold;
             padding: 0 5px;
         }
+        .reason-tag {
+            background-color: rgba(59, 130, 246, 0.2);
+            color: #93c5fd;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            margin-right: 5px;
+        }
 
         .hero-container {
             background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
@@ -146,12 +154,15 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 新增：白話文分析生成器 ---
+# --- 新增：白話文分析生成器 (含 AI 判斷依據) ---
 def generate_layman_analysis(df, fund, pred_price):
     last_close = df['Close'].iloc[-1]
+    ma5 = df['MA5'].iloc[-1]
     ma20 = df['MA20'].iloc[-1]
     ma60 = df['MA60'].iloc[-1]
     rsi = df['RSI'].iloc[-1]
+    k = df['K'].iloc[-1]
+    d = df['D'].iloc[-1]
     
     analysis = []
     
@@ -175,11 +186,34 @@ def generate_layman_analysis(df, fund, pred_price):
         heat = "⚖️ **交易健康**：目前買賣力道平衡，走勢屬於健康範圍。"
     analysis.append(heat)
     
-    # 3. AI 預測結論
+    # 3. AI 預測與判斷依據 (Explainable AI Lite)
     pred_diff = pred_price - last_close
     pred_pct = (pred_diff / last_close) * 100
     direction = "上漲" if pred_diff > 0 else "下跌"
-    ai_msg = f"🤖 **AI 模型預測**：根據大數據演算，預測明日股價可能來到 <span class='highlight'>{pred_price:.2f}</span>，潛在{direction}幅度約 <span class='highlight'>{abs(pred_pct):.2f}%</span>。"
+    
+    # 生成判斷理由
+    reasons = []
+    if pred_diff > 0: # 預測上漲
+        if last_close > ma20: reasons.append("股價位於月線之上(趨勢偏多)")
+        if rsi < 40: reasons.append("RSI 處於相對低檔(具反彈空間)")
+        if k > d: reasons.append("KD 黃金交叉(動能轉強)")
+        if last_close > ma5: reasons.append("站穩五日線(短線強勢)")
+        if not reasons: reasons.append("技術指標醞釀反彈")
+    else: # 預測下跌
+        if last_close < ma20: reasons.append("股價跌破月線(趨勢偏弱)")
+        if rsi > 70: reasons.append("RSI 過熱(有回檔風險)")
+        if k < d: reasons.append("KD 死亡交叉(動能轉弱)")
+        if last_close < ma5: reasons.append("跌破五日線(短線疲弱)")
+        if not reasons: reasons.append("上方壓力較大")
+        
+    reason_str = "、".join(reasons)
+    
+    ai_msg = f"""
+    🤖 **AI 模型預測**：根據大數據演算，預測明日股價可能來到 <span class='highlight'>{pred_price:.2f}</span>，潛在{direction}幅度約 <span class='highlight'>{abs(pred_pct):.2f}%</span>。<br>
+    <div style='margin-top: 10px; font-size: 0.95rem; color: #cbd5e1;'>
+        💡 <b>AI 判斷主要依據：</b>{reason_str}。
+    </div>
+    """
     
     return analysis, ai_msg
 
@@ -324,7 +358,7 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **功能更新**：\n1. AI 綜合白話分析\n2. K 線圖新增現價線 & 右側座標\n3. 新聞依時間排序")
+st.sidebar.info("💡 **功能更新**：\n1. AI 顯示判斷依據 (新功能)\n2. K 線圖顯示現價線 & 十字準星\n3. 恢復區間篩選拉條")
 
 # --- 5. 主程式 ---
 if stock_input:
@@ -360,7 +394,7 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- 新增：AI 綜合白話分析區塊 ---
+    # --- 新增：AI 綜合白話分析區塊 (含判斷依據) ---
     st.markdown(f"""
     <div class="ai-report-box">
         <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
@@ -433,16 +467,16 @@ if stock_input:
             annotation_font=dict(color="#FACC15", size=12)
         )
 
-        # --- 優化 2：優化版面與十字游標 ---
+        # --- 優化 2：優化版面、十字游標與恢復 RangeSlider ---
         fig.update_layout(
             height=600, 
             template="plotly_dark",
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
             margin=dict(l=0, r=0, t=30, b=0),
-            hovermode='x unified', # 統一顯示資訊
+            hovermode='x unified', # 統一顯示資訊 (Crosshair)
             xaxis=dict(
-                rangeslider=dict(visible=True), 
+                rangeslider=dict(visible=True), # 恢復底部拖拉條
                 rangeselector=dict(
                     buttons=list([
                         dict(count=1, label="1月", step="month", stepmode="backward"),
