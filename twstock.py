@@ -12,10 +12,10 @@ import twstock
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="台股 AI 旗艦分析系統 (深度版)", layout="wide")
 
-# --- 2. 左側邊欄：設定 (加入 key 防止 ID 重複錯誤) ---
+# --- 2. 左側邊欄：設定 ---
 st.sidebar.title("🔍 戰情控制室")
 
-# 關鍵修正：加入 key 參數，避免 DuplicateElementId 錯誤
+# 輸入框 (已有 Key 防止 ID 衝突)
 stock_code = st.sidebar.text_input("輸入台股代碼", "2603", key="sidebar_stock_code") 
 full_code = f"{stock_code}.TW"
 
@@ -33,7 +33,7 @@ if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **系統提示**：\n已修復元件 ID 衝突錯誤，並增強圖表標題的可讀性與深度分析文字。")
+st.sidebar.info("💡 **系統提示**：\n已修復新聞時間格式錯誤 (AttributeError)，並加入資料防呆機制。")
 
 # --- 3. 核心函數：全方位資料抓取 ---
 @st.cache_data
@@ -76,7 +76,7 @@ def load_comprehensive_data(raw_code, yf_code):
     # D. 國際指數
     indices = {
         'S&P 500 (美)': '^GSPC',
-        '費城半導體 (美)': '^SOX', # 換成費半，對台股電子更有參考性
+        '費城半導體 (美)': '^SOX',
         '日經 225 (日)': '^N225',
         'KOSPI (韓)': '^KS11'
     }
@@ -111,10 +111,10 @@ def load_comprehensive_data(raw_code, yf_code):
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
-    df['MA120'] = df['Close'].rolling(window=120).mean() # 半年線
+    df['MA120'] = df['Close'].rolling(window=120).mean()
     df['VolMA20'] = df['Volume'].rolling(window=20).mean()
     
-    # 乖離率 (Bias) - 深度分析用
+    # 乖離率
     df['Bias20'] = ((df['Close'] - df['MA20']) / df['MA20']) * 100
     df['Bias60'] = ((df['Close'] - df['MA60']) / df['MA60']) * 100
 
@@ -195,11 +195,10 @@ c3.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K")
 c4.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
 c5.metric("KD 指標", f"K:{df['K'].iloc[-1]:.0f} / D:{df['D'].iloc[-1]:.0f}")
 
-# --- 6. 🕵️‍♂️ 深度分析報告區 (新增) ---
+# --- 6. 🕵️‍♂️ 深度分析報告區 ---
 st.markdown("---")
 st.subheader("🕵️‍♂️ 深度戰略分析報告")
 
-# 準備分析變數
 ma20 = df['MA20'].iloc[-1]
 ma60 = df['MA60'].iloc[-1]
 bias20 = df['Bias20'].iloc[-1]
@@ -207,7 +206,6 @@ k_val = df['K'].iloc[-1]
 d_val = df['D'].iloc[-1]
 rsi_val = df['RSI'].iloc[-1]
 
-# 1. 趨勢分析文字生成
 trend_text = ""
 if curr > ma20 and curr > ma60:
     trend_text = "✅ **多頭排列**：股價位於月線與季線之上，中長期趨勢看漲，主力控盤穩健。"
@@ -218,7 +216,6 @@ elif curr > ma60 and curr < ma20:
 else:
     trend_text = "⚠️ **反彈格局**：股價站上月線但仍受制於季線，尚未完全翻多。"
 
-# 2. 乖離率分析
 bias_text = ""
 if bias20 > 10:
     bias_text = "🔥 **乖離過大**：股價離月線太遠（乖離率 > 10%），短線容易拉回修正，不宜追高。"
@@ -227,7 +224,6 @@ elif bias20 < -10:
 else:
     bias_text = "⚖️ **乖離正常**：股價沿著均線穩步運行，無過熱或超跌跡象。"
 
-# 3. AI 預測解讀
 ai_text = ""
 if pred_pct > 1.5:
     ai_text = f"🚀 **AI 強力看漲**：模型預測明日有 {pred_pct:.2f}% 的潛在漲幅，動能強勁。"
@@ -236,7 +232,6 @@ elif pred_pct < -1.5:
 else:
     ai_text = "⚖️ **AI 預測盤整**：預期波動不大，建議區間操作。"
 
-# 顯示分析卡片
 with st.container():
     col_a1, col_a2 = st.columns(2)
     with col_a1:
@@ -255,19 +250,17 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📰 相關新聞"
 ])
 
-# === Tab 1: 技術分析 (標題優化) ===
+# === Tab 1: 技術分析 ===
 with tab1:
-    # 篩選資料
     days_map = {"近 3 個月": 90, "近 6 個月": 180, "近 1 年": 365, "近 3 年": 1095, "全部": 9999}
     start_dt = datetime.now(pytz.timezone('Asia/Taipei')) - timedelta(days=days_map[date_option])
     if df.index.tzinfo is None: df.index = df.index.tz_localize("Asia/Taipei")
     df_view = df[df.index >= start_dt] if date_option != "全部" else df
 
-    # 繪圖
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.05, 
         row_heights=[0.5, 0.15, 0.15, 0.2],
-        subplot_titles=("股價 K 線與均線趨勢", "市場成交量能", "KD 隨機指標", "OBV 籌碼能量潮") # 加上明確標題
+        subplot_titles=("股價 K 線與均線趨勢", "市場成交量能", "KD 隨機指標", "OBV 籌碼能量潮")
     )
     
     # 1. 主圖
@@ -291,7 +284,6 @@ with tab1:
     fig.update_layout(height=1100, xaxis_rangeslider_visible=False, title_text=f"<b>{name} ({stock_code}) 綜合技術分析圖表</b>")
     st.plotly_chart(fig, use_container_width=True)
     
-    # 教學區
     with st.expander("🎓 圖表教學：如何看懂這些線？", expanded=False):
         st.markdown("""
         * **K線與均線**：K 線代表股價，月線(橘)代表短期成本，季線(藍)代表長期成本。站上季線通常代表多頭。
@@ -342,7 +334,6 @@ with tab3:
         for i, (name, val) in enumerate(corrs.items()):
             cols[i].metric(name, f"{val:.2f}", delta="高度正相關" if val > 0.7 else "負相關" if val < -0.3 else None)
 
-        # 繪圖
         fig_glob = go.Figure()
         norm_base = (base_series / base_series.iloc[0]) * 100
         fig_glob.add_trace(go.Scatter(x=base_series.index, y=norm_base, name=f"{stock_code} (本股)", line=dict(color='red', width=3)))
@@ -356,11 +347,27 @@ with tab3:
     else:
         st.warning("暫無國際指數資料")
 
-# === Tab 4: 新聞 ===
+# === Tab 4: 新聞 (修復 AttributeError) ===
 with tab4:
     st.subheader(f"📰 {name} 最新動態")
     if news:
         for n in news[:8]:
-            st.markdown(f"➤ **[{n.get('title')}]({n.get('link')})**")
-            st.caption(f"來源：{n.get('publisher')} | 時間：{pd.to_datetime(n.get('providerPublishTime'), unit='s').strftime('%Y-%m-%d')}")
+            # 防呆處理：確保時間格式正確
+            try:
+                raw_time = n.get('providerPublishTime')
+                if raw_time:
+                    pub_time = pd.to_datetime(raw_time, unit='s').strftime('%Y-%m-%d %H:%M')
+                else:
+                    pub_time = "未知時間"
+            except:
+                pub_time = "未知時間"
+            
+            title = n.get('title', '無標題')
+            link = n.get('link', '#')
+            publisher = n.get('publisher', '未知來源')
+            
+            st.markdown(f"➤ **[{title}]({link})**")
+            st.caption(f"來源：{publisher} | 時間：{pub_time}")
             st.markdown("---")
+    else:
+        st.write("暫無相關新聞")
