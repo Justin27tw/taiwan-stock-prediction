@@ -95,6 +95,18 @@ def local_css():
         .stTabs [data-baseweb="tab-list"] { gap: 10px; background-color: transparent; }
         .stTabs [data-baseweb="tab"] { height: 45px; background-color: #1e293b; border-radius: 8px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.05); padding: 0 20px; }
         .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; }
+        
+        /* 警語樣式 */
+        .disclaimer-box {
+            background-color: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            text-align: center;
+            margin-top: 30px;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -115,7 +127,7 @@ def check_market_status(market):
             return True, "🟢 交易進行中", "#22c55e"
     return False, "🔴 已收盤", "#ef4444"
 
-# --- 新增：中文翻譯與新聞抓取 (含時間排序優化) ---
+# --- 中文翻譯與新聞抓取 ---
 def get_chinese_name_and_news(raw_name, raw_code):
     zh_name = raw_name
     try:
@@ -131,11 +143,9 @@ def get_chinese_name_and_news(raw_name, raw_code):
         rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         
         feed = feedparser.parse(rss_url)
-        
-        # --- 優化：強制按時間排序 (最新的在最上面) ---
         sorted_entries = sorted(feed.entries, key=lambda x: x.published_parsed, reverse=True)
         
-        for entry in sorted_entries[:8]: # 取前 8 則
+        for entry in sorted_entries[:8]:
             pub_date = entry.published_parsed
             if pub_date:
                 dt = datetime(*pub_date[:6])
@@ -154,7 +164,7 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 新增：白話文分析生成器 (含 AI 判斷依據) ---
+# --- 白話文分析生成器 (含 AI 判斷依據) ---
 def generate_layman_analysis(df, fund, pred_price):
     last_close = df['Close'].iloc[-1]
     ma5 = df['MA5'].iloc[-1]
@@ -166,7 +176,6 @@ def generate_layman_analysis(df, fund, pred_price):
     
     analysis = []
     
-    # 1. 趨勢分析
     if last_close > ma20 and ma20 > ma60:
         trend = "📈 **強勢多頭**：股價站穩月線與季線之上，長期趨勢看漲，適合順勢操作。"
     elif last_close < ma20 and ma20 < ma60:
@@ -177,7 +186,6 @@ def generate_layman_analysis(df, fund, pred_price):
         trend = "☁️ **震盪整理**：股價在均線附近徘徊，方向尚未明確，多空持續拉鋸。"
     analysis.append(trend)
     
-    # 2. 熱度分析 (RSI)
     if rsi > 75:
         heat = "🔥 **市場過熱**：RSI 指標顯示買盤過於擁擠 (Overbought)，短線隨時可能出現回檔修正，**請勿盲目追高**。"
     elif rsi < 25:
@@ -186,20 +194,18 @@ def generate_layman_analysis(df, fund, pred_price):
         heat = "⚖️ **交易健康**：目前買賣力道平衡，走勢屬於健康範圍。"
     analysis.append(heat)
     
-    # 3. AI 預測與判斷依據 (Explainable AI Lite)
     pred_diff = pred_price - last_close
     pred_pct = (pred_diff / last_close) * 100
     direction = "上漲" if pred_diff > 0 else "下跌"
     
-    # 生成判斷理由
     reasons = []
-    if pred_diff > 0: # 預測上漲
+    if pred_diff > 0:
         if last_close > ma20: reasons.append("股價位於月線之上(趨勢偏多)")
         if rsi < 40: reasons.append("RSI 處於相對低檔(具反彈空間)")
         if k > d: reasons.append("KD 黃金交叉(動能轉強)")
         if last_close > ma5: reasons.append("站穩五日線(短線強勢)")
         if not reasons: reasons.append("技術指標醞釀反彈")
-    else: # 預測下跌
+    else:
         if last_close < ma20: reasons.append("股價跌破月線(趨勢偏弱)")
         if rsi > 70: reasons.append("RSI 過熱(有回檔風險)")
         if k < d: reasons.append("KD 死亡交叉(動能轉弱)")
@@ -217,7 +223,7 @@ def generate_layman_analysis(df, fund, pred_price):
     
     return analysis, ai_msg
 
-# --- 3. 核心資料載入 (含 Session 移除修正) ---
+# --- 3. 核心資料載入 ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
     tickers_to_try = []
@@ -315,7 +321,6 @@ def load_data(stock_code, market_type, is_tw):
     except:
         pred_price = df['Close'].iloc[-1]
 
-    # 生成文字分析
     txt_analysis, ai_msg = generate_layman_analysis(df, fundamentals, pred_price)
 
     last_time = df.index[-1]
@@ -358,7 +363,11 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **功能更新**：\n1. AI 顯示判斷依據 (新功能)\n2. K 線圖顯示現價線 & 十字準星\n3. 恢復區間篩選拉條")
+st.sidebar.info("💡 **功能更新**：\n1. AI 顯示判斷依據\n2. K 線圖顯示現價線 & 十字準星\n3. 新增免責聲明")
+
+# --- 新增：側邊欄免責聲明 ---
+st.sidebar.markdown("---")
+st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究與技術交流，AI 預測不代表未來股價保證。投資有賺有賠，請自行評估風險，勿作為唯一投資依據。")
 
 # --- 5. 主程式 ---
 if stock_input:
@@ -394,7 +403,6 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- 新增：AI 綜合白話分析區塊 (含判斷依據) ---
     st.markdown(f"""
     <div class="ai-report-box">
         <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
@@ -455,28 +463,28 @@ if stock_input:
         colors = ['red' if r['Open'] < r['Close'] else 'green' for i, r in df.iterrows()]
         fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name="成交量"), row=2, col=1)
         
-        # --- 優化 1：顯示現價線 ---
+        # --- 顯示現價線 ---
         last_close = df['Close'].iloc[-1]
         fig.add_hline(
             y=last_close, 
             line_dash="dash", 
-            line_color="#FACC15", # 亮黃色
+            line_color="#FACC15", 
             row=1, col=1,
             annotation_text=f"現價: {last_close:.2f}",
             annotation_position="top right",
             annotation_font=dict(color="#FACC15", size=12)
         )
 
-        # --- 優化 2：優化版面、十字游標與恢復 RangeSlider ---
+        # --- 優化版面、十字游標與 RangeSlider ---
         fig.update_layout(
             height=600, 
             template="plotly_dark",
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
             margin=dict(l=0, r=0, t=30, b=0),
-            hovermode='x unified', # 統一顯示資訊 (Crosshair)
+            hovermode='x unified', 
             xaxis=dict(
-                rangeslider=dict(visible=True), # 恢復底部拖拉條
+                rangeslider=dict(visible=True), 
                 rangeselector=dict(
                     buttons=list([
                         dict(count=1, label="1月", step="month", stepmode="backward"),
@@ -495,7 +503,7 @@ if stock_input:
                 title="價格",
                 showgrid=True,
                 zeroline=False,
-                side="right" # 將價格軸移到右側，更符合看盤習慣
+                side="right" 
             )
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -537,3 +545,13 @@ if stock_input:
                 st.warning("⚠️ **爆量訊號**：今日成交量大於平均 2 倍，請留意主力換手或變盤。")
             else:
                 st.success("⚖️ **量能溫和**：成交量在正常範圍內。")
+
+    # --- 新增：頁尾免責聲明 ---
+    st.markdown("---")
+    st.markdown("""
+    <div class="disclaimer-box">
+        ⚠️ <strong>免責聲明</strong>：本網站提供的所有數據、圖表與分析結果僅供學術研究與個人參考。
+        <br>系統不保證資料的準確性、即時性或完整性。使用者不應將其視為專業投資建議。
+        <br>投資涉及風險，證券價格可升可跌，過去表現不代表未來績效。請自行評估風險，盈虧自負。
+    </div>
+    """, unsafe_allow_html=True)
