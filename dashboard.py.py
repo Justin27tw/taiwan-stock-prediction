@@ -162,27 +162,30 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 3. 核心資料載入 (修復版：增強穩定性與上櫃支援) ---
+# --- 3. 核心資料載入 (修復版：解決港股代碼重複拼接問題) ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
-    # 1. 定義嘗試抓取的後綴清單
-    suffixes = []
+    # 1. 定義嘗試抓取的 "完整代碼" 清單 (不再使用後綴拼接)
+    tickers_to_try = []
+    
     if is_tw:
-        suffixes = [".TW", ".TWO"] # 先試上市，再試上櫃
+        # 台股：嘗試 .TW (上市) 和 .TWO (上櫃)
+        tickers_to_try = [f"{stock_code}.TW", f"{stock_code}.TWO"]
     elif "港股" in market_type:
-        # 處理港股代碼補零 (e.g., 700 -> 0700.HK)
+        # 港股：補零至 4 位數，並加上 .HK
         hk_code = stock_code.zfill(4)
-        suffixes = [f"{hk_code}.HK"]
+        tickers_to_try = [f"{hk_code}.HK"]
     else:
-        suffixes = [""] # 美股不用後綴
+        # 美股：直接使用輸入代碼
+        tickers_to_try = [stock_code]
 
     ticker = None
     history = pd.DataFrame()
     yf_code_used = ""
 
     # 2. 迴圈嘗試抓取股價 (History)
-    for suffix in suffixes:
-        yf_code = f"{stock_code}{suffix}"
+    for yf_code in tickers_to_try:
+        # 注意：這裡直接使用定義好的完整代碼 yf_code，不需再拼接
         temp_ticker = yf.Ticker(yf_code)
         try:
             # 嘗試抓取股價
@@ -196,28 +199,25 @@ def load_data(stock_code, market_type, is_tw):
             print(f"嘗試 {yf_code} 失敗: {e}")
             continue
 
-    # 如果嘗試完所有後綴還是空的，回傳 None
+    # 如果嘗試完所有可能性還是空的，回傳 None
     if history.empty:
         return None
 
-    # 3. 獨立抓取基本資料 (Info) - 避免因 Info 失敗導致整個程式崩潰
+    # 3. 獨立抓取基本資料 (Info)
     info = {}
     try:
         info = ticker.info
     except Exception as e:
         print(f"⚠️ Warning: 無法抓取 {yf_code_used} 的詳細 info, 使用預設值。錯誤: {e}")
-        # 如果 info 抓不到，給予一個空的 dict，避免後面報錯
         info = {}
 
     # 4. 名稱處理
     stock_name = yf_code_used
     industry = "未知產業"
     
-    # 優先使用 yfinance 的資訊，若無則用預設值
     long_name = info.get('longName', info.get('shortName', yf_code_used))
     industry = info.get('industry', info.get('sector', 'N/A'))
     
-    # 台股特別處理：嘗試用 twstock 修正名稱
     if is_tw and stock_code in twstock.codes:
         try:
             stock_name = twstock.codes[stock_code].name
@@ -230,7 +230,7 @@ def load_data(stock_code, market_type, is_tw):
     # 5. 執行翻譯與抓新聞
     zh_name, news_data = get_chinese_name_and_news(stock_name, stock_code)
 
-    # 6. 整理基本面數據 (加入安全取值 .get，防止崩潰)
+    # 6. 整理基本面數據
     fundamentals = {
         'PE': info.get('trailingPE', 'N/A'),
         'ForwardPE': info.get('forwardPE', 'N/A'),
@@ -280,9 +280,7 @@ def load_data(stock_code, market_type, is_tw):
 
     # 時間格式
     last_time = df.index[-1]
-    # 處理時區問題
     if last_time.tzinfo is None:
-        # 如果沒有時區，假設是 UTC 並轉為台北時間
         last_time = pytz.utc.localize(last_time).astimezone(pytz.timezone('Asia/Taipei'))
     else:
         last_time = last_time.astimezone(pytz.timezone('Asia/Taipei'))
