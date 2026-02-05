@@ -10,12 +10,12 @@ import pytz
 import twstock
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="台股 AI 旗艦分析系統 (深度版)", layout="wide")
+st.set_page_config(page_title="台股 AI 戰情室 (台股配色版)", layout="wide")
 
 # --- 2. 左側邊欄：設定 ---
 st.sidebar.title("🔍 戰情控制室")
 
-# 輸入框 (已有 Key 防止 ID 衝突)
+# 輸入框 (防止 ID 衝突)
 stock_code = st.sidebar.text_input("輸入台股代碼", "2603", key="sidebar_stock_code") 
 full_code = f"{stock_code}.TW"
 
@@ -33,7 +33,7 @@ if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **系統提示**：\n已新增「開盤、最高、最低、收盤」行情看板，讓您精確掌握當日震幅。")
+st.sidebar.info("💡 **顯示設定**：\n已切換為「台股配色模式」\n🔴 紅色 = 上漲 (Bullish)\n🟢 綠色 = 下跌 (Bearish)")
 
 # --- 3. 核心函數：全方位資料抓取 ---
 @st.cache_data
@@ -174,11 +174,7 @@ with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded
     df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, industry = data
     status.update(label=f"✅ {name} 分析報告生成完畢！", state="complete", expanded=False)
 
-# --- 5. 儀表板頭部 ---
-st.title(f"📊 {name} ({stock_code}) 投資戰情室")
-st.caption(f"🕒 資料最後更新：{up_time} | 🏢 產業類別：{industry}")
-
-# 取出最新一筆數據
+# --- 5. 數據準備 ---
 last_row = df.iloc[-1]
 prev_row = df.iloc[-2]
 
@@ -191,9 +187,20 @@ low_price = last_row['Low']
 # 漲跌計算
 diff = curr_price - prev_row['Close']
 pct = (diff / prev_row['Close']) * 100
-color_diff = "normal"
-if diff > 0: color_diff = "normal" # Streamlit metric 自動會綠色/紅色
-# 註：Streamlit 的 metric delta 顏色：正數綠色，負數紅色 (在台股習慣可能相反，但這是框架預設)
+
+# 台股配色邏輯 (紅漲綠跌)
+if diff > 0:
+    main_color = "#e11d48" # 亮紅
+    bg_color = "rgba(225, 29, 72, 0.1)"
+    arrow = "▲"
+elif diff < 0:
+    main_color = "#10b981" # 亮綠
+    bg_color = "rgba(16, 185, 129, 0.1)"
+    arrow = "▼"
+else:
+    main_color = "#9ca3af" # 灰
+    bg_color = "rgba(156, 163, 175, 0.1)"
+    arrow = "-"
 
 # AI 與量能數據
 vol = last_row['Volume']
@@ -201,25 +208,51 @@ vol_ma = last_row['VolMA20']
 pred_diff = pred_price - curr_price
 pred_pct = (pred_diff / curr_price) * 100
 
-# === 新增：今日行情看板 (OHLC) ===
-st.subheader("📝 今日行情數據")
+# --- 6. 🏆 置頂大看板 (HTML 實作) ---
+st.title(f"📊 {name} ({stock_code})")
+
+# 使用 HTML 製作超大報價看板
+st.markdown(f"""
+<div style="
+    background-color: {bg_color};
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 25px;
+    border: 2px solid {main_color};
+    text-align: center;">
+    
+    <span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">目前成交價</span>
+    <h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">
+        {curr_price:.2f}
+    </h1>
+    <h2 style="color: {main_color}; margin: 0; font-size: 2rem;">
+        {arrow} {abs(diff):.2f} ({abs(pct):.2f}%)
+    </h2>
+    <p style="color: #6b7280; font-size: 0.9rem; margin-top: 10px;">
+        🕒 資料時間: {update_time} | 昨收: {prev_row['Close']:.2f}
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# --- 7. 詳細行情數據 (OHLC) ---
+# 注意：使用 delta_color="inverse" 讓 st.metric 變為 紅漲綠跌
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("開盤價", f"{open_price:.2f}")
 m2.metric("最高價", f"{high_price:.2f}")
 m3.metric("最低價", f"{low_price:.2f}")
-m4.metric("收盤價 (現價)", f"{curr_price:.2f}", f"{diff:.2f} ({pct:.2f}%)")
+m4.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K", delta_color="inverse")
 
 st.markdown("---")
 
-# === 既有：AI 與技術指標區 ===
+# --- 8. AI 預測與關鍵指標 ---
 st.subheader("🤖 AI 預測與關鍵指標")
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)")
-c2.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K (vs均量)")
+c1.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)", delta_color="inverse")
+c2.metric("乖離率 (月線)", f"{last_row['Bias20']:.2f}%")
 c3.metric("RSI (14)", f"{last_row['RSI']:.1f}")
 c4.metric("KD 指標", f"K:{last_row['K']:.0f} / D:{last_row['D']:.0f}")
 
-# --- 6. 🕵️‍♂️ 深度分析報告區 ---
+# --- 9. 🕵️‍♂️ 深度分析報告區 ---
 st.markdown("---")
 st.subheader("🕵️‍♂️ 深度戰略分析報告")
 
@@ -265,7 +298,7 @@ with st.container():
         kd_cross = "黃金交叉 (買進訊號)" if (k_val > d_val and df['K'].iloc[-2] < df['D'].iloc[-2]) else "死亡交叉 (賣出訊號)" if (k_val < d_val and df['K'].iloc[-2] > df['D'].iloc[-2]) else "無交叉"
         st.write(f"**【關鍵訊號】** KD目前呈現 **{kd_cross}**，RSI 數值為 **{rsi_val:.1f}**。")
 
-# --- 7. 多分頁圖表區 ---
+# --- 10. 多分頁圖表區 ---
 st.markdown("---")
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 深度技術分析", 
@@ -296,7 +329,6 @@ with tab1:
     last_idx = df_view.index[-1]
     last_val = df_view['Close'].iloc[-1]
     
-    # 水平虛線
     fig.add_shape(
         type="line", 
         x0=df_view.index[0], x1=df_view.index[-1], 
@@ -304,7 +336,6 @@ with tab1:
         line=dict(color="red", width=1, dash="dash"),
         row=1, col=1
     )
-    # 標記點
     fig.add_trace(go.Scatter(
         x=[last_idx], y=[last_val],
         mode="markers+text",
@@ -396,7 +427,7 @@ with tab3:
     else:
         st.warning("暫無國際指數資料")
 
-# === Tab 4: 新聞 ===
+# === Tab 4: 新聞 (防呆機制) ===
 with tab4:
     st.subheader(f"📰 {name} 最新動態")
     if news:
