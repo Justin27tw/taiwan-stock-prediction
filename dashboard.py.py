@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, time
 import pytz
 import twstock
 from streamlit_autorefresh import st_autorefresh
-from deep_translator import GoogleTranslator # 新增：翻譯套件
-import feedparser # 新增：RSS 解析套件
+from deep_translator import GoogleTranslator
+import feedparser
 import urllib.parse
-import requests # 記得確認上方有無 import requests
+import requests 
 
 # --- 1. 頁面設定與 CSS 美化 ---
 st.set_page_config(page_title="全球股市 AI 戰情室", layout="wide", page_icon="📈")
@@ -20,19 +20,15 @@ st.set_page_config(page_title="全球股市 AI 戰情室", layout="wide", page_i
 def local_css():
     st.markdown("""
     <style>
-        /* 引入現代字體 */
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
         
         html, body, [class*="css"] {
             font-family: 'Noto Sans TC', sans-serif;
             background-color: #0e1117;
         }
-
-        /* 隱藏預設元件 */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         
-        /* 數據卡片樣式 (Glassmorphism) */
         .metric-card {
             background-color: rgba(30, 41, 59, 0.7);
             border: 1px solid rgba(255, 255, 255, 0.1);
@@ -46,27 +42,39 @@ def local_css():
         .metric-card:hover {
             transform: translateY(-5px);
             border-color: #3b82f6;
-            box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
         }
-        
-        .card-title {
-            color: #94a3b8; 
-            font-size: 0.9rem; 
-            margin-bottom: 8px;
-            font-weight: 500;
+        .card-title { color: #94a3b8; font-size: 0.9rem; margin-bottom: 8px; font-weight: 500; }
+        .card-value { font-size: 1.8rem; font-weight: 700; color: #f8fafc; }
+        .card-delta { font-size: 0.9rem; margin-top: 5px; font-weight: 600; }
+
+        /* AI 分析報告區塊樣式 */
+        .ai-report-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
         }
-        .card-value {
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: #f8fafc;
+        .ai-report-title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #34d399;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .card-delta {
-            font-size: 0.9rem;
-            margin-top: 5px;
-            font-weight: 600;
+        .ai-report-content {
+            font-size: 1.1rem;
+            line-height: 1.8;
+            color: #e2e8f0;
+        }
+        .highlight {
+            color: #fbbf24;
+            font-weight: bold;
+            padding: 0 5px;
         }
 
-        /* 置頂看板樣式 */
         .hero-container {
             background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
             padding: 30px;
@@ -74,27 +82,11 @@ def local_css():
             border: 1px solid rgba(255,255,255,0.1);
             margin-bottom: 30px;
             text-align: center;
-            position: relative;
         }
-
-        /* Tab 優化 */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 10px;
-            background-color: transparent;
-        }
-        .stTabs [data-baseweb="tab"] {
-            height: 45px;
-            background-color: #1e293b;
-            border-radius: 8px;
-            color: #cbd5e1;
-            border: 1px solid rgba(255,255,255,0.05);
-            padding: 0 20px;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #2563eb !important;
-            color: white !important;
-            border-color: #2563eb !important;
-        }
+        
+        .stTabs [data-baseweb="tab-list"] { gap: 10px; background-color: transparent; }
+        .stTabs [data-baseweb="tab"] { height: 45px; background-color: #1e293b; border-radius: 8px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.05); padding: 0 20px; }
+        .stTabs [aria-selected="true"] { background-color: #2563eb !important; color: white !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -103,48 +95,39 @@ local_css()
 # --- 2. 輔助函數 ---
 def check_market_status(market):
     utc_now = datetime.now(pytz.utc)
-    tz_map = {
-        "台股": 'Asia/Taipei',
-        "港股": 'Asia/Hong_Kong',
-        "美股": 'America/New_York'
-    }
-    
+    tz_map = { "台股": 'Asia/Taipei', "港股": 'Asia/Hong_Kong', "美股": 'America/New_York' }
     target_tz = pytz.timezone(next((v for k, v in tz_map.items() if k in market), 'Asia/Taipei'))
     local_now = utc_now.astimezone(target_tz)
     
-    # 簡易判斷 (週一至週五)
     if 0 <= local_now.weekday() <= 4:
         current_time = local_now.time()
-        # 簡單定義開盤區間 (可再細修)
         start = time(9, 0) if "美股" not in market else time(9, 30)
-        end = time(13, 30) if "台股" in market else (time(16, 0) if "美股" in market else time(16, 0))
-        
+        end = time(13, 30) if "台股" in market else time(16, 0)
         if start <= current_time <= end:
             return True, "🟢 交易進行中", "#22c55e"
-            
     return False, "🔴 已收盤", "#ef4444"
 
-# --- 新增：中文翻譯與新聞抓取函數 ---
+# --- 新增：中文翻譯與新聞抓取 (含時間排序優化) ---
 def get_chinese_name_and_news(raw_name, raw_code):
-    # 1. 嘗試翻譯名稱
     zh_name = raw_name
     try:
-        # 如果本身不含中文，才進行翻譯
         if not any("\u4e00" <= char <= "\u9fff" for char in raw_name):
             zh_name = GoogleTranslator(source='auto', target='zh-TW').translate(raw_name)
     except:
         pass
 
-    # 2. 抓取 Google News (繁體中文)
     news_list = []
     try:
-        # 搜尋關鍵字：中文名稱 + 股票代碼 (增加精準度)
         query = f"{zh_name} {raw_code}"
         encoded_query = urllib.parse.quote(query)
         rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         
         feed = feedparser.parse(rss_url)
-        for entry in feed.entries[:6]: # 取前 6 則
+        
+        # --- 優化：強制按時間排序 (最新的在最上面) ---
+        sorted_entries = sorted(feed.entries, key=lambda x: x.published_parsed, reverse=True)
+        
+        for entry in sorted_entries[:8]: # 取前 8 則
             pub_date = entry.published_parsed
             if pub_date:
                 dt = datetime(*pub_date[:6])
@@ -163,72 +146,84 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 3. 核心資料載入 (修正版：移除 Session，解決 YFDataException 衝突) ---
+# --- 新增：白話文分析生成器 ---
+def generate_layman_analysis(df, fund, pred_price):
+    last_close = df['Close'].iloc[-1]
+    ma20 = df['MA20'].iloc[-1]
+    ma60 = df['MA60'].iloc[-1]
+    rsi = df['RSI'].iloc[-1]
+    
+    analysis = []
+    
+    # 1. 趨勢分析
+    if last_close > ma20 and ma20 > ma60:
+        trend = "📈 **強勢多頭**：股價站穩月線與季線之上，長期趨勢看漲，適合順勢操作。"
+    elif last_close < ma20 and ma20 < ma60:
+        trend = "📉 **弱勢空頭**：股價位於均線下方，賣壓較重，建議保守觀望。"
+    elif last_close > ma20:
+        trend = "🌤️ **短期反彈**：股價重新站回月線，短期有轉強跡象，但需觀察能否站穩。"
+    else:
+        trend = "☁️ **震盪整理**：股價在均線附近徘徊，方向尚未明確，多空持續拉鋸。"
+    analysis.append(trend)
+    
+    # 2. 熱度分析 (RSI)
+    if rsi > 75:
+        heat = "🔥 **市場過熱**：RSI 指標顯示買盤過於擁擠 (Overbought)，短線隨時可能出現回檔修正，**請勿盲目追高**。"
+    elif rsi < 25:
+        heat = "❄️ **市場超賣**：RSI 指標顯示股價已跌深 (Oversold)，乖離過大，有機會出現跌深反彈。"
+    else:
+        heat = "⚖️ **交易健康**：目前買賣力道平衡，走勢屬於健康範圍。"
+    analysis.append(heat)
+    
+    # 3. AI 預測結論
+    pred_diff = pred_price - last_close
+    pred_pct = (pred_diff / last_close) * 100
+    direction = "上漲" if pred_diff > 0 else "下跌"
+    ai_msg = f"🤖 **AI 模型預測**：根據大數據演算，預測明日股價可能來到 <span class='highlight'>{pred_price:.2f}</span>，潛在{direction}幅度約 <span class='highlight'>{abs(pred_pct):.2f}%</span>。"
+    
+    return analysis, ai_msg
+
+# --- 3. 核心資料載入 (含 Session 移除修正) ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
-    # 1. 定義嘗試抓取的 "完整代碼" 清單
     tickers_to_try = []
-    
     if is_tw:
-        # 台股：嘗試 .TW (上市) 和 .TWO (上櫃)
         tickers_to_try = [f"{stock_code}.TW", f"{stock_code}.TWO"]
     elif "港股" in market_type:
-        # 港股：補零至 4 位數，並加上 .HK
         hk_code = stock_code.zfill(4)
         tickers_to_try = [f"{hk_code}.HK"]
     else:
-        # 美股：直接使用輸入代碼
         tickers_to_try = [stock_code]
 
     ticker = None
     history = pd.DataFrame()
     yf_code_used = ""
 
-    # 2. 迴圈嘗試抓取股價 (History)
     for yf_code in tickers_to_try:
-        # 修正重點：不再傳入 session，讓 yfinance 自動處理
         temp_ticker = yf.Ticker(yf_code)
         try:
-            # 先試抓 5 天，確認代碼有效
             check_data = temp_ticker.history(period="5d")
-            
             if not check_data.empty:
-                # 代碼有效，抓取完整 2 年數據
                 history = temp_ticker.history(period="2y")
                 ticker = temp_ticker
                 yf_code_used = yf_code
                 break 
-        except Exception as e:
-            print(f"嘗試 {yf_code} 失敗: {e}")
+        except:
             continue
 
-    # 如果嘗試完所有可能性還是空的，回傳 None
     if history.empty:
         return None
 
-    # 3. 獨立抓取基本資料 (Info) - 混合使用 info 和 fast_info
     info = {}
     fast_info = {}
-    
-    # 嘗試抓取完整 info
-    try:
-        info = ticker.info
-    except:
-        pass
-    
-    # 嘗試抓取快速 info (通常市值等數據這裡比較準)
-    try:
-        fast_info = ticker.fast_info
-    except:
-        pass
+    try: info = ticker.info
+    except: pass
+    try: fast_info = ticker.fast_info
+    except: pass
 
-    # 4. 名稱處理
     stock_name = yf_code_used
-    industry = "未知產業"
-    
-    # 優先使用 yfinance 的資訊
-    long_name = info.get('longName', info.get('shortName', yf_code_used))
     industry = info.get('industry', info.get('sector', 'N/A'))
+    long_name = info.get('longName', info.get('shortName', yf_code_used))
     
     if is_tw and stock_code in twstock.codes:
         try:
@@ -239,18 +234,11 @@ def load_data(stock_code, market_type, is_tw):
     else:
         stock_name = long_name
 
-    # 5. 執行翻譯與抓新聞
     zh_name, news_data = get_chinese_name_and_news(stock_name, stock_code)
 
-    # 6. 整理基本面數據
-    
-    # 嘗試取得市值 (優先用 fast_info)
     market_cap = info.get('marketCap')
     if market_cap is None and hasattr(fast_info, 'market_cap'):
         market_cap = fast_info.market_cap
-
-    # 嘗試取得昨收
-    last_price = history['Close'].iloc[-1] if not history.empty else 0
 
     fundamentals = {
         'PE': info.get('trailingPE', 'N/A'),
@@ -262,18 +250,15 @@ def load_data(stock_code, market_type, is_tw):
         'TargetPrice': info.get('targetMeanPrice', 'N/A')
     }
 
-    # 7. 技術指標計算
     df = history.copy()
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
     df['MA60'] = df['Close'].rolling(60).mean()
     
-    # KD
     rsv = (df['Close'] - df['Low'].rolling(9).min()) / (df['High'].rolling(9).max() - df['Low'].rolling(9).min()) * 100
     df['K'] = rsv.ewm(com=2).mean()
     df['D'] = df['K'].ewm(com=2).mean()
     
-    # RSI
     delta = df['Close'].diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
@@ -281,11 +266,8 @@ def load_data(stock_code, market_type, is_tw):
     ema_down = down.ewm(com=13, adjust=False).mean()
     rs = ema_up / ema_down
     df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # OBV (量能)
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
-    # 8. AI 預測 (XGBoost)
     pred_price = 0
     try:
         if len(df) > 60:
@@ -299,7 +281,9 @@ def load_data(stock_code, market_type, is_tw):
     except:
         pred_price = df['Close'].iloc[-1]
 
-    # 時間格式
+    # 生成文字分析
+    txt_analysis, ai_msg = generate_layman_analysis(df, fundamentals, pred_price)
+
     last_time = df.index[-1]
     if last_time.tzinfo is None:
         last_time = pytz.utc.localize(last_time).astimezone(pytz.timezone('Asia/Taipei'))
@@ -316,8 +300,11 @@ def load_data(stock_code, market_type, is_tw):
         'fund': fundamentals,
         'pred': pred_price,
         'time': last_time.strftime('%Y-%m-%d %H:%M'),
-        'yf_code': yf_code_used
+        'yf_code': yf_code_used,
+        'analysis': txt_analysis,
+        'ai_msg': ai_msg
     }
+
 # --- 4. 側邊欄 ---
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
@@ -329,7 +316,6 @@ elif "港股" in market_type: default_code = "9988"
 stock_input = st.sidebar.text_input("輸入代碼", default_code)
 is_tw = "台股" in market_type
 
-# 自動刷新
 is_open, msg, color_status = check_market_status(market_type)
 if is_open:
     st_autorefresh(interval=60000, key="auto_refresh")
@@ -338,7 +324,7 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **新增功能**：\n1. 自動翻譯英文股名\n2. 抓取 Google 中文新聞\n3. 基本面數據 (本益比/殖利率)")
+st.sidebar.info("💡 **功能更新**：\n1. AI 綜合白話分析 (趨勢/熱度)\n2. 新聞強制按時間排序\n3. 解決資料抓取問題")
 
 # --- 5. 主程式 ---
 if stock_input:
@@ -353,12 +339,9 @@ if stock_input:
     prev = df.iloc[-2]
     change = last['Close'] - prev['Close']
     pct = (change / prev['Close']) * 100
-    
-    # 顏色邏輯
     color = "#ef4444" if change > 0 else "#22c55e" if change < 0 else "#94a3b8"
     arrow = "▲" if change > 0 else "▼" if change < 0 else "-"
     
-    # --- UI: 置頂英雄區 (Hero Section) ---
     st.markdown(f"""
     <div class="hero-container" style="border-top: 5px solid {color};">
         <div style="font-size: 1.2rem; color: #94a3b8; margin-bottom: 5px;">{market_type} | {data['industry']}</div>
@@ -377,35 +360,40 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- UI: 數據卡片區 (Metric Cards) ---
+    # --- 新增：AI 綜合白話分析區塊 ---
+    st.markdown(f"""
+    <div class="ai-report-box">
+        <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
+        <div class="ai-report-content">
+            {data['ai_msg']}<br><br>
+            <ul style="margin-top: 10px;">
+                <li>{data['analysis'][0]}</li>
+                <li>{data['analysis'][1]}</li>
+            </ul>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     c1, c2, c3, c4 = st.columns(4)
-    
-    # 自訂卡片顯示函數
     def card(col, title, value, delta=None, prefix="", suffix=""):
         delta_html = ""
         if delta:
             d_color = "#ef4444" if "▲" in delta else "#22c55e" if "▼" in delta else "#94a3b8"
             delta_html = f'<div class="card-delta" style="color: {d_color};">{delta}</div>'
-            
         col.markdown(f"""
         <div class="metric-card">
             <div class="card-title">{title}</div>
             <div class="card-value">{prefix}{value}{suffix}</div>
             {delta_html}
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
 
-    # 計算 AI 漲跌
     pred_diff = data['pred'] - last['Close']
     pred_pct = (pred_diff / last['Close']) * 100
     ai_arrow = "▲" if pred_diff > 0 else "▼"
     
     card(c1, "AI 預測明日價格", f"{data['pred']:.2f}", f"{ai_arrow} {abs(pred_pct):.2f}%")
-    
-    # 基本面/籌碼面數據
     pe_val = data['fund']['PE']
     pe_str = f"{pe_val:.1f}" if isinstance(pe_val, (int, float)) else "N/A"
-    
     yield_val = data['fund']['Yield']
     yield_str = f"{yield_val*100:.2f}%" if isinstance(yield_val, (int, float)) else "N/A"
     
@@ -418,30 +406,16 @@ if stock_input:
 
     st.markdown("---")
 
-    # --- UI: 分頁內容 ---
     tab1, tab2, tab3 = st.tabs(["📊 深度技術分析", "📰 智能新聞解析", "💰 籌碼與基本面"])
 
     with tab1:
-        # 繪圖
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
-        
-        # K線
         fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="股價"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name="月線"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name="季線"), row=1, col=1)
-        
-        # 成交量
         colors = ['red' if r['Open'] < r['Close'] else 'green' for i, r in df.iterrows()]
         fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name="成交量"), row=2, col=1)
-        
-        fig.update_layout(
-            height=600, 
-            template="plotly_dark",
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=0, r=0, t=30, b=0),
-            xaxis_rangeslider_visible=False
-        )
+        fig.update_layout(height=600, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=30, b=0), xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
@@ -464,17 +438,9 @@ if stock_input:
         with col_f1:
             st.subheader("📋 關鍵財務數據")
             fund = data['fund']
-            
-            # 使用 DataFrame 展示表格
             f_data = {
                 "指標": ["本益比 (P/E)", "預估本益比 (Fwd P/E)", "股價淨值比 (P/B)", "股東權益報酬率 (ROE)", "分析師目標價"],
-                "數值": [
-                    fund['PE'], 
-                    fund['ForwardPE'], 
-                    fund['PB'], 
-                    f"{fund['ROE']*100:.2f}%" if isinstance(fund['ROE'], float) else 'N/A',
-                    fund['TargetPrice']
-                ]
+                "數值": [fund['PE'], fund['ForwardPE'], fund['PB'], f"{fund['ROE']*100:.2f}%" if isinstance(fund['ROE'], float) else 'N/A', fund['TargetPrice']]
             }
             st.dataframe(pd.DataFrame(f_data), hide_index=True, use_container_width=True)
 
@@ -485,8 +451,6 @@ if stock_input:
             * **OBV 能量潮**：目前圖表中已計算 OBV，若 OBV 創新高但股價未過高，代表主力在吸籌；反之則為出貨。
             """)
             st.metric("目前 OBV 數值", f"{int(last['OBV']/1000):,} K")
-            
-            # 簡單的大戶訊號
             if last['Volume'] > df['Volume'].mean() * 2:
                 st.warning("⚠️ **爆量訊號**：今日成交量大於平均 2 倍，請留意主力換手或變盤。")
             else:
