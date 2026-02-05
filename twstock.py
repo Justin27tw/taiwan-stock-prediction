@@ -36,7 +36,7 @@ st.sidebar.info("💡 **教學模式啟動中**：\n點擊各個圖表下方的 
 def load_comprehensive_data(code):
     ticker = yf.Ticker(code)
     
-    # A. 基礎資料與名稱
+    # A. 基礎資料與名稱 (修復 UnboundLocalError)
     try:
         info = ticker.info
         stock_name = info.get('longName') or info.get('shortName') or code
@@ -45,6 +45,7 @@ def load_comprehensive_data(code):
     except:
         stock_name = code
         industry = sector = "N/A"
+        info = {} # <--- 關鍵修復：定義空字典，防止變數未宣告錯誤
     
     # B. 歷史股價 (技術面)
     df = ticker.history(start="2019-01-01")
@@ -68,17 +69,20 @@ def load_comprehensive_data(code):
     
     global_data = {}
     if not df.empty:
-        start_date = df.index[-250].strftime('%Y-%m-%d')
-        for name, idx_code in indices.items():
-            try:
-                idx_df = yf.download(idx_code, start=start_date, progress=False)
-                if not idx_df.empty:
-                    idx_series = idx_df['Close']
-                    if isinstance(idx_series, pd.DataFrame): 
-                        idx_series = idx_series.iloc[:, 0]
-                    global_data[name] = idx_series
-            except:
-                pass
+        try:
+            start_date = df.index[-250].strftime('%Y-%m-%d')
+            for name, idx_code in indices.items():
+                try:
+                    idx_df = yf.download(idx_code, start=start_date, progress=False)
+                    if not idx_df.empty:
+                        idx_series = idx_df['Close']
+                        if isinstance(idx_series, pd.DataFrame): 
+                            idx_series = idx_series.iloc[:, 0]
+                        global_data[name] = idx_series
+                except:
+                    pass
+        except:
+            pass
 
     # E. 新聞
     try:
@@ -86,8 +90,9 @@ def load_comprehensive_data(code):
     except:
         news = []
 
+    # 防呆機制：若無數據，回傳 9 個 None (修復數量不符錯誤)
     if df.empty:
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     # --- 資料計算 (技術指標) ---
     df['MA5'] = df['Close'].rolling(window=5).mean()
@@ -115,14 +120,19 @@ def load_comprehensive_data(code):
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
     # --- F. AI 預測 ---
-    df_clean = df.dropna().copy()
-    features = ['Open', 'High', 'Low', 'Close', 'Volume', 'MA5', 'MA20', 'RSI', 'K', 'D', 'OBV']
-    X = df_clean[features]
-    y = df_clean['Close'].shift(-1).dropna()
-    
-    model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=5)
-    model.fit(X[:-1], y)
-    prediction = model.predict(X.tail(1))[0]
+    prediction = df['Close'].iloc[-1] # 預設值
+    try:
+        df_clean = df.dropna().copy()
+        if len(df_clean) > 30: # 確保有足夠資料才訓練
+            features = ['Open', 'High', 'Low', 'Close', 'Volume', 'MA5', 'MA20', 'RSI', 'K', 'D', 'OBV']
+            X = df_clean[features]
+            y = df_clean['Close'].shift(-1).dropna()
+            
+            model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=5)
+            model.fit(X[:-1], y)
+            prediction = model.predict(X.tail(1))[0]
+    except:
+        pass # 若預測失敗，保持使用最新收盤價
 
     # 時間格式
     last_time = df.index[-1]
@@ -138,15 +148,17 @@ def load_comprehensive_data(code):
 # --- 4. 主程式執行 ---
 
 with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded=True) as status:
+    # 呼叫函數並接收 9 個回傳值
     data = load_comprehensive_data(full_code)
-    df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, info = data
     
-    if df is not None:
-        status.update(label=f"✅ {name} 分析報告生成完畢！", state="complete", expanded=False)
-    else:
+    # 檢查是否為 None (代表抓取失敗)
+    if data[0] is None:
         status.update(label="❌ 查無資料", state="error")
-        st.error("找不到該股票代碼。")
+        st.error(f"找不到代碼 {stock_code}，請確認是否為上市櫃股票。")
         st.stop()
+        
+    df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, info = data
+    status.update(label=f"✅ {name} 分析報告生成完畢！", state="complete", expanded=False)
 
 # --- 5. 儀表板頭部 ---
 st.title(f"📊 {name} ({stock_code}) 投資戰情室")
@@ -300,7 +312,7 @@ with tab3:
             * **接近 -1.0**：代表**「唱反調」**。美股漲，這支反而跌（通常是避險資產）。
             """)
 
-# === Tab 4 & 5 (略為精簡以節省篇幅，邏輯同上) ===
+# === Tab 4 & 5 ===
 with tab4:
     st.subheader("🏢 公司檔案")
     st.info(f"產業：{info.get('industry','N/A')} | 員工：{info.get('fullTimeEmployees','N/A')}人")
