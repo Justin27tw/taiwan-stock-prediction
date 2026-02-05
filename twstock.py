@@ -8,11 +8,54 @@ from xgboost import XGBRegressor
 from datetime import datetime, timedelta, time
 import pytz
 import twstock
+from streamlit_autorefresh import st_autorefresh # 引入自動刷新套件
 
 # --- 1. 頁面設定 ---
 st.set_page_config(page_title="全球股市 AI 戰情室", layout="wide")
 
-# --- 2. 左側邊欄：設定 ---
+# --- 2. 輔助函數 (提早定義以便調用) ---
+def check_market_status(market):
+    """
+    回傳: (is_open: bool, status_text: str, status_color: str)
+    """
+    utc_now = datetime.now(pytz.utc)
+    
+    if "台股" in market:
+        tz = pytz.timezone('Asia/Taipei')
+        local_now = utc_now.astimezone(tz)
+        # 台股交易時間: 週一至週五 09:00 - 13:30
+        if 0 <= local_now.weekday() <= 4:
+            current_time = local_now.time()
+            start = time(9, 0)
+            end = time(13, 30)
+            if start <= current_time <= end:
+                return True, "🟢 開盤中 (交易進行中)", "#22c55e"
+    
+    elif "港股" in market:
+        tz = pytz.timezone('Asia/Hong_Kong')
+        local_now = utc_now.astimezone(tz)
+        # 港股交易時間: 週一至週五 09:30 - 16:00
+        if 0 <= local_now.weekday() <= 4:
+            current_time = local_now.time()
+            start = time(9, 30)
+            end = time(16, 0)
+            if start <= current_time <= end:
+                return True, "🟢 開盤中 (交易進行中)", "#22c55e"
+
+    elif "美股" in market:
+        tz = pytz.timezone('America/New_York')
+        local_now = utc_now.astimezone(tz)
+        # 美股交易時間: 週一至週五 09:30 - 16:00 (當地時間)
+        if 0 <= local_now.weekday() <= 4:
+            current_time = local_now.time()
+            start = time(9, 30)
+            end = time(16, 0)
+            if start <= current_time <= end:
+                return True, "🟢 開盤中 (美股盤中)", "#22c55e"
+
+    return False, "🔴 已收盤 (Market Closed)", "#ef4444"
+
+# --- 3. 左側邊欄：設定 ---
 st.sidebar.title("🔍 戰情控制室")
 
 # 市場選擇
@@ -58,57 +101,29 @@ date_option = st.sidebar.selectbox(
     key="sidebar_date_option"
 )
 
-if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
+# 手動刷新按鈕 (保留作為備用)
+if st.sidebar.button("🔄 立即手動刷新", key="sidebar_refresh_btn"):
     st.cache_data.clear()
     st.rerun()
 
+# --- 自動刷新邏輯 ---
+is_market_open, status_msg, _ = check_market_status(market_type)
+
+# 側邊欄顯示狀態
 st.sidebar.markdown("---")
+if is_market_open:
+    st.sidebar.success(f"⚡ **實時監控模式**\n\n系統將每 60 秒自動更新股價與 AI 分析。")
+    # 設定自動刷新：每 60,000 毫秒 (60秒) 刷新一次
+    count = st_autorefresh(interval=60000, limit=None, key="realtime_monitor")
+else:
+    st.sidebar.warning(f"💤 **休市模式**\n\n目前市場已收盤，停止自動更新以節省資源。")
+
 st.sidebar.info("💡 **顯示設定**：\n🔴 紅色 = 上漲 (Bullish)\n🟢 綠色 = 下跌 (Bearish)")
 
-# --- 3. 輔助函數：判斷開休市狀態 ---
-def check_market_status(market):
-    """
-    回傳: (is_open: bool, status_text: str, status_color: str)
-    """
-    utc_now = datetime.now(pytz.utc)
-    
-    if "台股" in market:
-        tz = pytz.timezone('Asia/Taipei')
-        local_now = utc_now.astimezone(tz)
-        # 台股交易時間: 週一至週五 09:00 - 13:30
-        if 0 <= local_now.weekday() <= 4:
-            current_time = local_now.time()
-            start = time(9, 0)
-            end = time(13, 30)
-            if start <= current_time <= end:
-                return True, "🟢 開盤中 (交易進行中)", "#22c55e"
-    
-    elif "港股" in market:
-        tz = pytz.timezone('Asia/Hong_Kong')
-        local_now = utc_now.astimezone(tz)
-        # 港股交易時間: 週一至週五 09:30 - 16:00
-        if 0 <= local_now.weekday() <= 4:
-            current_time = local_now.time()
-            start = time(9, 30)
-            end = time(16, 0)
-            if start <= current_time <= end:
-                return True, "🟢 開盤中 (交易進行中)", "#22c55e"
-
-    elif "美股" in market:
-        tz = pytz.timezone('America/New_York')
-        local_now = utc_now.astimezone(tz)
-        # 美股交易時間: 週一至週五 09:30 - 16:00 (當地時間)
-        if 0 <= local_now.weekday() <= 4:
-            current_time = local_now.time()
-            start = time(9, 30)
-            end = time(16, 0)
-            if start <= current_time <= end:
-                return True, "🟢 開盤中 (美股盤中)", "#22c55e"
-
-    return False, "🔴 已收盤 (Market Closed)", "#ef4444"
 
 # --- 4. 核心函數：全方位資料抓取 ---
-@st.cache_data
+# 關鍵修改：加入 ttl=60，代表數據只快取 60 秒，過期後強制重抓
+@st.cache_data(ttl=60)
 def load_comprehensive_data(raw_code, yf_code, is_taiwan):
     # 1. 名稱抓取邏輯
     stock_name = raw_code
@@ -280,7 +295,7 @@ taipei_tz = pytz.timezone('Asia/Taipei')
 now_taipei = datetime.now(taipei_tz)
 current_time_str = now_taipei.strftime('%Y-%m-%d %H:%M:%S')
 
-# 判斷市場狀態
+# 判斷市場狀態 (再次確認，用於顯示)
 is_open, status_text, status_color = check_market_status(market_type)
 price_label = "⚡ 目前成交價" if is_open else "🔒 今日收盤股價"
 
@@ -290,10 +305,9 @@ vol_ma = last_row['VolMA20']
 pred_diff = pred_price - curr_price
 pred_pct = (pred_diff / curr_price) * 100
 
-# --- 7. 🏆 置頂大看板 (修正縮排問題) ---
+# --- 7. 🏆 置頂大看板 ---
 st.title(f"📊 {name} ({stock_code})")
 
-# 這裡移除了 f-string 中的所有縮排，確保 HTML 能正確渲染
 st.markdown(f"""
 <div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; margin-bottom: 25px; border: 2px solid {main_color}; text-align: center; position: relative;">
 <div style="position: absolute; top: 10px; right: 15px; text-align: right;">
@@ -307,10 +321,14 @@ st.markdown(f"""
 <h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">{curr_price:.2f}</h1>
 <h2 style="color: {main_color}; margin: 0; font-size: 2rem;">{arrow} {abs(diff):.2f} ({abs(pct):.2f}%)</h2>
 <p style="color: #6b7280; font-size: 0.9rem; margin-top: 15px;">
-📅 數據更新時間: {data_time} | 昨收: {prev_row['Close']:.2f}
+📅 數據時間: {data_time} | 昨收: {prev_row['Close']:.2f}
 </p>
 </div>
 """, unsafe_allow_html=True)
+
+# 若開盤中，顯示小提示
+if is_open:
+    st.toast(f"⚡ 股價自動更新中... ({current_time_str})", icon="🔄")
 
 # --- 8. 詳細行情數據 ---
 m1, m2, m3, m4 = st.columns(4)
