@@ -162,56 +162,86 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 3. 核心資料載入 (新增基本面與翻譯) ---
+# --- 3. 核心資料載入 (修復版：增強穩定性與上櫃支援) ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
-    # 處理代碼
-    yf_code = stock_code
-    if is_tw: yf_code = f"{stock_code}.TW"
-    elif "港股" in market_type: 
-        yf_code = f"{stock_code.zfill(4)}.HK" if len(stock_code) < 5 else f"{stock_code}.HK"
-    
-    # 1. 抓取基礎資料
-    ticker = yf.Ticker(yf_code)
-    try:
-        history = ticker.history(period="2y") # 抓 2 年以利計算長期均線
-        info = ticker.info
-    except:
-        return None
+    # 1. 定義嘗試抓取的後綴清單
+    suffixes = []
+    if is_tw:
+        suffixes = [".TW", ".TWO"] # 先試上市，再試上櫃
+    elif "港股" in market_type:
+        # 處理港股代碼補零 (e.g., 700 -> 0700.HK)
+        hk_code = stock_code.zfill(4)
+        suffixes = [f"{hk_code}.HK"]
+    else:
+        suffixes = [""] # 美股不用後綴
 
+    ticker = None
+    history = pd.DataFrame()
+    yf_code_used = ""
+
+    # 2. 迴圈嘗試抓取股價 (History)
+    for suffix in suffixes:
+        yf_code = f"{stock_code}{suffix}"
+        temp_ticker = yf.Ticker(yf_code)
+        try:
+            # 嘗試抓取股價
+            temp_history = temp_ticker.history(period="2y")
+            if not temp_history.empty:
+                ticker = temp_ticker
+                history = temp_history
+                yf_code_used = yf_code
+                break # 成功抓到就跳出迴圈
+        except Exception as e:
+            print(f"嘗試 {yf_code} 失敗: {e}")
+            continue
+
+    # 如果嘗試完所有後綴還是空的，回傳 None
     if history.empty:
         return None
 
-    # 2. 名稱處理
-    stock_name = yf_code
+    # 3. 獨立抓取基本資料 (Info) - 避免因 Info 失敗導致整個程式崩潰
+    info = {}
+    try:
+        info = ticker.info
+    except Exception as e:
+        print(f"⚠️ Warning: 無法抓取 {yf_code_used} 的詳細 info, 使用預設值。錯誤: {e}")
+        # 如果 info 抓不到，給予一個空的 dict，避免後面報錯
+        info = {}
+
+    # 4. 名稱處理
+    stock_name = yf_code_used
     industry = "未知產業"
     
-    # 優先使用 yfinance 的資訊
-    long_name = info.get('longName', info.get('shortName', yf_code))
+    # 優先使用 yfinance 的資訊，若無則用預設值
+    long_name = info.get('longName', info.get('shortName', yf_code_used))
     industry = info.get('industry', info.get('sector', 'N/A'))
     
-    # 台股特別處理：嘗試用 twstock 修正名稱 (有時候 yf 的中文名怪怪的)
+    # 台股特別處理：嘗試用 twstock 修正名稱
     if is_tw and stock_code in twstock.codes:
-        stock_name = twstock.codes[stock_code].name
-        industry = twstock.codes[stock_code].type
+        try:
+            stock_name = twstock.codes[stock_code].name
+            industry = twstock.codes[stock_code].type
+        except:
+            stock_name = long_name
     else:
         stock_name = long_name
 
-    # 3. 執行翻譯與抓新聞 (新增功能)
+    # 5. 執行翻譯與抓新聞
     zh_name, news_data = get_chinese_name_and_news(stock_name, stock_code)
 
-    # 4. 整理基本面數據 (新增需求)
+    # 6. 整理基本面數據 (加入安全取值 .get，防止崩潰)
     fundamentals = {
         'PE': info.get('trailingPE', 'N/A'),
         'ForwardPE': info.get('forwardPE', 'N/A'),
         'PB': info.get('priceToBook', 'N/A'),
-        'Yield': info.get('dividendYield', 0), # 通常是 0.05 代表 5%
+        'Yield': info.get('dividendYield', 0),
         'MarketCap': info.get('marketCap', 'N/A'),
         'ROE': info.get('returnOnEquity', 'N/A'),
         'TargetPrice': info.get('targetMeanPrice', 'N/A')
     }
 
-    # 5. 技術指標計算
+    # 7. 技術指標計算
     df = history.copy()
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
@@ -234,7 +264,7 @@ def load_data(stock_code, market_type, is_tw):
     # OBV (量能)
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
-    # 6. AI 預測 (XGBoost)
+    # 8. AI 預測 (XGBoost)
     pred_price = 0
     try:
         if len(df) > 60:
@@ -250,7 +280,9 @@ def load_data(stock_code, market_type, is_tw):
 
     # 時間格式
     last_time = df.index[-1]
+    # 處理時區問題
     if last_time.tzinfo is None:
+        # 如果沒有時區，假設是 UTC 並轉為台北時間
         last_time = pytz.utc.localize(last_time).astimezone(pytz.timezone('Asia/Taipei'))
     else:
         last_time = last_time.astimezone(pytz.timezone('Asia/Taipei'))
@@ -265,9 +297,8 @@ def load_data(stock_code, market_type, is_tw):
         'fund': fundamentals,
         'pred': pred_price,
         'time': last_time.strftime('%Y-%m-%d %H:%M'),
-        'yf_code': yf_code
+        'yf_code': yf_code_used
     }
-
 # --- 4. 側邊欄 ---
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
