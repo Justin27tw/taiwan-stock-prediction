@@ -33,7 +33,7 @@ if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **系統提示**：\n已修復新聞時間格式錯誤 (AttributeError)，並加入資料防呆機制。")
+st.sidebar.info("💡 **系統提示**：\n已在 K 線圖加入「目前股價」紅色虛線與標記，方便即時判讀位階。")
 
 # --- 3. 核心函數：全方位資料抓取 ---
 @st.cache_data
@@ -250,7 +250,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📰 相關新聞"
 ])
 
-# === Tab 1: 技術分析 ===
+# === Tab 1: 技術分析 (新增現價標註) ===
 with tab1:
     days_map = {"近 3 個月": 90, "近 6 個月": 180, "近 1 年": 365, "近 3 年": 1095, "全部": 9999}
     start_dt = datetime.now(pytz.timezone('Asia/Taipei')) - timedelta(days=days_map[date_option])
@@ -267,6 +267,30 @@ with tab1:
     fig.add_trace(go.Candlestick(x=df_view.index, open=df_view['Open'], high=df_view['High'], low=df_view['Low'], close=df_view['Close'], name="K線"), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA20'], name="月線 (20MA)", line=dict(color='orange', width=1.5)), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA60'], name="季線 (60MA)", line=dict(color='blue', width=1.5)), row=1, col=1)
+
+    # --- 新增：現價標註 (水平線 + 氣泡) ---
+    last_idx = df_view.index[-1]
+    last_val = df_view['Close'].iloc[-1]
+    
+    # 水平虛線
+    fig.add_shape(
+        type="line", 
+        x0=df_view.index[0], x1=df_view.index[-1], 
+        y0=last_val, y1=last_val,
+        line=dict(color="red", width=1, dash="dash"),
+        row=1, col=1
+    )
+    # 標記點與文字
+    fig.add_trace(go.Scatter(
+        x=[last_idx], y=[last_val],
+        mode="markers+text",
+        marker=dict(color="red", size=8),
+        text=[f"現價 {last_val:.2f}"],
+        textposition="top center",
+        name="目前股價",
+        showlegend=False
+    ), row=1, col=1)
+    # ------------------------------------
     
     # 2. 成交量
     colors = ['red' if r['Open'] - r['Close'] >= 0 else 'green' for i, r in df_view.iterrows()]
@@ -286,6 +310,7 @@ with tab1:
     
     with st.expander("🎓 圖表教學：如何看懂這些線？", expanded=False):
         st.markdown("""
+        * **現價紅線**：畫面上的紅色虛線與標記點，代表這檔股票現在的價格位置。
         * **K線與均線**：K 線代表股價，月線(橘)代表短期成本，季線(藍)代表長期成本。站上季線通常代表多頭。
         * **成交量**：紅柱代表跌、綠柱代表漲（台股慣例紅色為漲，若設定不同請見諒）。有量才有價。
         * **KD 指標**：80以上過熱（可能跌），20以下超賣（可能漲）。黃金交叉（橘穿藍往上）為買點。
@@ -347,12 +372,11 @@ with tab3:
     else:
         st.warning("暫無國際指數資料")
 
-# === Tab 4: 新聞 (修復 AttributeError) ===
+# === Tab 4: 新聞 (防呆機制) ===
 with tab4:
     st.subheader(f"📰 {name} 最新動態")
     if news:
         for n in news[:8]:
-            # 防呆處理：確保時間格式正確
             try:
                 raw_time = n.get('providerPublishTime')
                 if raw_time:
