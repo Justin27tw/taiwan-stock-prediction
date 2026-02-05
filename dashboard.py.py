@@ -163,35 +163,33 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 3. 核心資料載入 (終極修復版：加入瀏覽器偽裝與容錯機制) ---
+# --- 3. 核心資料載入 (修正版：移除 Session，解決 YFDataException 衝突) ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
-    # 1. 建立偽裝 Session (解決 Yahoo 阻擋問題)
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
-    })
-
-    # 2. 定義嘗試抓取的 "完整代碼" 清單
+    # 1. 定義嘗試抓取的 "完整代碼" 清單
     tickers_to_try = []
+    
     if is_tw:
+        # 台股：嘗試 .TW (上市) 和 .TWO (上櫃)
         tickers_to_try = [f"{stock_code}.TW", f"{stock_code}.TWO"]
     elif "港股" in market_type:
+        # 港股：補零至 4 位數，並加上 .HK
         hk_code = stock_code.zfill(4)
         tickers_to_try = [f"{hk_code}.HK"]
     else:
+        # 美股：直接使用輸入代碼
         tickers_to_try = [stock_code]
 
     ticker = None
     history = pd.DataFrame()
     yf_code_used = ""
 
-    # 3. 迴圈嘗試抓取股價 (History)
+    # 2. 迴圈嘗試抓取股價 (History)
     for yf_code in tickers_to_try:
-        # 關鍵：將 session 傳入 Ticker
-        temp_ticker = yf.Ticker(yf_code, session=session)
+        # 修正重點：不再傳入 session，讓 yfinance 自動處理
+        temp_ticker = yf.Ticker(yf_code)
         try:
-            # 先試抓 5 天，確認代碼有效 (速度較快)
+            # 先試抓 5 天，確認代碼有效
             check_data = temp_ticker.history(period="5d")
             
             if not check_data.empty:
@@ -204,27 +202,31 @@ def load_data(stock_code, market_type, is_tw):
             print(f"嘗試 {yf_code} 失敗: {e}")
             continue
 
+    # 如果嘗試完所有可能性還是空的，回傳 None
     if history.empty:
         return None
 
-    # 4. 抓取基本資料 (Info) - 混合使用 info 和 fast_info
+    # 3. 獨立抓取基本資料 (Info) - 混合使用 info 和 fast_info
     info = {}
     fast_info = {}
+    
+    # 嘗試抓取完整 info
     try:
         info = ticker.info
     except:
         pass
     
+    # 嘗試抓取快速 info (通常市值等數據這裡比較準)
     try:
         fast_info = ticker.fast_info
     except:
         pass
 
-    # 5. 名稱處理
+    # 4. 名稱處理
     stock_name = yf_code_used
     industry = "未知產業"
     
-    # 優先從 info 拿，沒有則從預設值
+    # 優先使用 yfinance 的資訊
     long_name = info.get('longName', info.get('shortName', yf_code_used))
     industry = info.get('industry', info.get('sector', 'N/A'))
     
@@ -237,17 +239,17 @@ def load_data(stock_code, market_type, is_tw):
     else:
         stock_name = long_name
 
-    # 6. 執行翻譯與抓新聞
+    # 5. 執行翻譯與抓新聞
     zh_name, news_data = get_chinese_name_and_news(stock_name, stock_code)
 
-    # 7. 整理基本面數據 (增強容錯：若 info 抓不到，嘗試計算或給 N/A)
+    # 6. 整理基本面數據
     
-    # 嘗試取得市值 (fast_info 通常比較準且不易被擋)
+    # 嘗試取得市值 (優先用 fast_info)
     market_cap = info.get('marketCap')
     if market_cap is None and hasattr(fast_info, 'market_cap'):
         market_cap = fast_info.market_cap
 
-    # 嘗試取得昨收 (用於計算沒有即時股價時的參考)
+    # 嘗試取得昨收
     last_price = history['Close'].iloc[-1] if not history.empty else 0
 
     fundamentals = {
@@ -260,7 +262,7 @@ def load_data(stock_code, market_type, is_tw):
         'TargetPrice': info.get('targetMeanPrice', 'N/A')
     }
 
-    # 8. 技術指標計算
+    # 7. 技術指標計算
     df = history.copy()
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
@@ -283,7 +285,7 @@ def load_data(stock_code, market_type, is_tw):
     # OBV (量能)
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
-    # 9. AI 預測 (XGBoost)
+    # 8. AI 預測 (XGBoost)
     pred_price = 0
     try:
         if len(df) > 60:
@@ -297,7 +299,7 @@ def load_data(stock_code, market_type, is_tw):
     except:
         pred_price = df['Close'].iloc[-1]
 
-    # 時間格式處理
+    # 時間格式
     last_time = df.index[-1]
     if last_time.tzinfo is None:
         last_time = pytz.utc.localize(last_time).astimezone(pytz.timezone('Asia/Taipei'))
@@ -306,7 +308,7 @@ def load_data(stock_code, market_type, is_tw):
         
     return {
         'df': df,
-        'info': info, # 保留原始 info 以備不時之需
+        'info': info,
         'name_zh': zh_name,
         'name_en': stock_name,
         'industry': industry,
