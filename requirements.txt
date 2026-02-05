@@ -9,3 +9,5 @@ scikit-learn
 twstock
 lxml
 requests
+deep-translator
+feedparser
