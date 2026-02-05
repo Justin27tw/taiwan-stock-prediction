@@ -82,6 +82,19 @@ def local_css():
             font-size: 0.9em;
             margin-right: 5px;
         }
+        
+        /* 搜尋結果按鈕樣式 */
+        .stButton button {
+            width: 100%;
+            text-align: left;
+            border: 1px solid #334155;
+            background-color: #1e293b;
+            color: #e2e8f0;
+        }
+        .stButton button:hover {
+            border-color: #3b82f6;
+            color: #3b82f6;
+        }
 
         .hero-container {
             background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
@@ -127,7 +140,30 @@ def check_market_status(market):
             return True, "🟢 交易進行中", "#22c55e"
     return False, "🔴 已收盤", "#ef4444"
 
-# --- 新增：中文翻譯與新聞抓取 (含智慧回退機制) ---
+# --- 新增：搜尋代碼 API 函數 ---
+def search_symbols(query):
+    """
+    使用 Yahoo Finance API 搜尋股票代碼
+    """
+    url = "https://query2.finance.yahoo.com/v1/finance/search"
+    params = {
+        "q": query,
+        "quotesCount": 5,
+        "newsCount": 0,
+    }
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    }
+    try:
+        r = requests.get(url, params=params, headers=headers)
+        data = r.json()
+        if 'quotes' in data and len(data['quotes']) > 0:
+            return data['quotes']
+    except Exception as e:
+        print(f"Search Error: {e}")
+    return []
+
+# --- 中文翻譯與新聞抓取 (含智慧回退機制) ---
 def get_chinese_name_and_news(raw_name, raw_code):
     zh_name = raw_name
     translated = False
@@ -371,7 +407,29 @@ default_code = "2330"
 if "美股" in market_type: default_code = "NVDA"
 elif "港股" in market_type: default_code = "9988"
 
-stock_input = st.sidebar.text_input("輸入代碼", default_code)
+# --- 新增：代碼搜尋小幫手 (Expander) ---
+with st.sidebar.expander("🔍 不知道代碼？點此搜尋"):
+    search_query = st.text_input("輸入公司名稱 (例: 長榮, Apple)", key="search_input")
+    if search_query:
+        results = search_symbols(search_query)
+        if results:
+            st.markdown("請點擊下方按鈕帶入：")
+            for res in results:
+                symbol = res.get('symbol')
+                shortname = res.get('shortname', symbol)
+                # 當按鈕被點擊時，更新 session_state
+                if st.button(f"{symbol} - {shortname}", key=symbol):
+                    st.session_state.stock_code = symbol
+                    st.rerun() # 重新執行以更新主畫面
+        else:
+            st.info("找不到相關股票，請嘗試英文名稱。")
+
+# --- 主輸入框 (連結 Session State) ---
+# 初始化 session state
+if 'stock_code' not in st.session_state:
+    st.session_state.stock_code = default_code
+
+stock_input = st.sidebar.text_input("輸入代碼", key="stock_code")
 is_tw = "台股" in market_type
 
 is_open, msg, color_status = check_market_status(market_type)
@@ -382,11 +440,11 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **功能更新**：\n1. 新聞智慧回退 (自動修復翻譯問題)\n2. AI 顯示判斷依據\n3. K 線圖顯示現價線 & 十字準星")
+st.sidebar.info("💡 **功能更新**：\n1. 🔍 新增代碼搜尋功能\n2. 新聞智慧回退機制\n3. AI 判斷依據透明化")
 
 # --- 新增：側邊欄免責聲明 ---
 st.sidebar.markdown("---")
-st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究與技術交流，AI 預測不代表未來股價保證。投資有賺有賠，請自行評估風險，勿作為唯一投資依據。")
+st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究與技術交流，AI 預測不代表未來股價保證。投資有賺有賠，請自行評估風險，盈虧自負。")
 
 # --- 5. 主程式 ---
 if stock_input:
