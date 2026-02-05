@@ -5,7 +5,7 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from xgboost import XGBRegressor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import pytz
 import twstock
 
@@ -38,7 +38,7 @@ if "台股" in market_type:
     full_code = f"{stock_code}.TW"
     is_tw_stock = True
 elif "港股" in market_type:
-    # 港股自動補0 (如輸入 700 -> 0700.HK)
+    # 港股自動補0
     if len(stock_code) < 4:
         clean_code = stock_code.zfill(4)
     else:
@@ -63,16 +63,57 @@ if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **顯示設定**：\n已切換為「台股/亞股配色模式」\n🔴 紅色 = 上漲 (Bullish)\n🟢 綠色 = 下跌 (Bearish)")
+st.sidebar.info("💡 **顯示設定**：\n🔴 紅色 = 上漲 (Bullish)\n🟢 綠色 = 下跌 (Bearish)")
 
-# --- 3. 核心函數：全方位資料抓取 ---
+# --- 3. 輔助函數：判斷開休市狀態 ---
+def check_market_status(market):
+    """
+    回傳: (is_open: bool, status_text: str, status_color: str)
+    """
+    utc_now = datetime.now(pytz.utc)
+    
+    if "台股" in market:
+        tz = pytz.timezone('Asia/Taipei')
+        local_now = utc_now.astimezone(tz)
+        # 台股交易時間: 週一至週五 09:00 - 13:30
+        if 0 <= local_now.weekday() <= 4:
+            current_time = local_now.time()
+            start = time(9, 0)
+            end = time(13, 30)
+            if start <= current_time <= end:
+                return True, "🟢 開盤中 (交易進行中)", "#22c55e"
+    
+    elif "港股" in market:
+        tz = pytz.timezone('Asia/Hong_Kong')
+        local_now = utc_now.astimezone(tz)
+        # 港股交易時間: 週一至週五 09:30 - 16:00
+        if 0 <= local_now.weekday() <= 4:
+            current_time = local_now.time()
+            start = time(9, 30)
+            end = time(16, 0)
+            if start <= current_time <= end:
+                return True, "🟢 開盤中 (交易進行中)", "#22c55e"
+
+    elif "美股" in market:
+        tz = pytz.timezone('America/New_York')
+        local_now = utc_now.astimezone(tz)
+        # 美股交易時間: 週一至週五 09:30 - 16:00 (當地時間)
+        if 0 <= local_now.weekday() <= 4:
+            current_time = local_now.time()
+            start = time(9, 30)
+            end = time(16, 0)
+            if start <= current_time <= end:
+                return True, "🟢 開盤中 (美股盤中)", "#22c55e"
+
+    return False, "🔴 已收盤 (Market Closed)", "#ef4444"
+
+# --- 4. 核心函數：全方位資料抓取 ---
 @st.cache_data
 def load_comprehensive_data(raw_code, yf_code, is_taiwan):
     # 1. 名稱抓取邏輯
     stock_name = raw_code
     industry = "未知產業"
     
-    # 只在台股時使用 twstock
     if is_taiwan:
         try:
             if raw_code in twstock.codes:
@@ -87,7 +128,6 @@ def load_comprehensive_data(raw_code, yf_code, is_taiwan):
     
     try:
         info_yf = ticker.info
-        # 如果是港美股，或者 twstock 沒抓到，就用 yfinance 的資料
         if not is_taiwan or stock_name == raw_code:
             stock_name = info_yf.get('longName') or info_yf.get('shortName') or raw_code
         if industry == "未知產業":
@@ -182,18 +222,18 @@ def load_comprehensive_data(raw_code, yf_code, is_taiwan):
     except:
         pass
 
-    # 時間格式 (統一轉為台北時間)
+    # 時間格式 (最新資料時間)
     last_time = df.index[-1]
     if last_time.tzinfo is None:
         tz = pytz.timezone('Asia/Taipei')
         last_time = last_time.replace(tzinfo=pytz.utc).astimezone(tz)
     else:
         last_time = last_time.astimezone(pytz.timezone('Asia/Taipei'))
-    up_time = last_time.strftime('%Y-%m-%d %H:%M')
+    data_time_str = last_time.strftime('%Y-%m-%d %H:%M')
 
-    return df, stock_name, prediction, news, up_time, financials, balance_sheet, global_data, industry
+    return df, stock_name, prediction, news, data_time_str, financials, balance_sheet, global_data, industry
 
-# --- 4. 主程式執行 ---
+# --- 5. 主程式執行 ---
 
 with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded=True) as status:
     # 傳入 is_taiwan 參數
@@ -204,10 +244,10 @@ with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded
         st.error(f"找不到代碼 {full_code}，請確認代碼與市場選擇是否正確。")
         st.stop()
         
-    df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, industry = data
+    df, name, pred_price, news, data_time, fin_df, bal_df, glob_data, industry = data
     status.update(label=f"✅ {name} 分析報告生成完畢！", state="complete", expanded=False)
 
-# --- 5. 數據準備 ---
+# --- 6. 數據與狀態計算 ---
 last_row = df.iloc[-1]
 prev_row = df.iloc[-2]
 
@@ -235,26 +275,46 @@ else:
     bg_color = "rgba(156, 163, 175, 0.1)"
     arrow = "-"
 
+# 取得現在的台北時間
+taipei_tz = pytz.timezone('Asia/Taipei')
+now_taipei = datetime.now(taipei_tz)
+current_time_str = now_taipei.strftime('%Y-%m-%d %H:%M:%S')
+
+# 判斷市場狀態
+is_open, status_text, status_color = check_market_status(market_type)
+price_label = "⚡ 目前成交價" if is_open else "🔒 今日收盤股價"
+
 # AI 與量能數據
 vol = last_row['Volume']
 vol_ma = last_row['VolMA20']
 pred_diff = pred_price - curr_price
 pred_pct = (pred_diff / curr_price) * 100
 
-# --- 6. 🏆 置頂大看板 (修復 HTML 顯示錯誤) ---
+# --- 7. 🏆 置頂大看板 (狀態加強版) ---
 st.title(f"📊 {name} ({stock_code})")
 
-# 注意：這裡去除了不必要的縮排，以避免 Streamlit 將其誤判為程式碼區塊
 st.markdown(f"""
-<div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; margin-bottom: 25px; border: 2px solid {main_color}; text-align: center;">
-<span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">目前成交價</span>
-<h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">{curr_price:.2f}</h1>
-<h2 style="color: {main_color}; margin: 0; font-size: 2rem;">{arrow} {abs(diff):.2f} ({abs(pct):.2f}%)</h2>
-<p style="color: #6b7280; font-size: 0.9rem; margin-top: 10px;">🕒 資料時間: {up_time} | 昨收: {prev_row['Close']:.2f}</p>
+<div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; margin-bottom: 25px; border: 2px solid {main_color}; text-align: center; position: relative;">
+    
+    <div style="position: absolute; top: 10px; right: 15px; text-align: right;">
+        <div style="font-size: 0.9rem; color: #6b7280; font-weight: bold;">🇹🇼 台北時間</div>
+        <div style="font-size: 1.1rem; color: #333; font-family: monospace;">{current_time_str}</div>
+        <div style="margin-top: 5px; background-color: {status_color}; color: white; padding: 2px 8px; border-radius: 5px; font-size: 0.8rem; display: inline-block;">
+            {status_text}
+        </div>
+    </div>
+
+    <span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">{price_label}</span>
+    <h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">{curr_price:.2f}</h1>
+    <h2 style="color: {main_color}; margin: 0; font-size: 2rem;">{arrow} {abs(diff):.2f} ({abs(pct):.2f}%)</h2>
+    
+    <p style="color: #6b7280; font-size: 0.9rem; margin-top: 15px;">
+        📅 數據更新時間: {data_time} | 昨收: {prev_row['Close']:.2f}
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 詳細行情數據 ---
+# --- 8. 詳細行情數據 ---
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("開盤價", f"{open_price:.2f}")
 m2.metric("最高價", f"{high_price:.2f}")
@@ -263,7 +323,7 @@ m4.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K", delta
 
 st.markdown("---")
 
-# --- 8. AI 預測與關鍵指標 ---
+# --- 9. AI 預測與關鍵指標 ---
 st.subheader("🤖 AI 預測與關鍵指標")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)", delta_color="inverse")
@@ -271,7 +331,7 @@ c2.metric("乖離率 (月線)", f"{last_row['Bias20']:.2f}%")
 c3.metric("RSI (14)", f"{last_row['RSI']:.1f}")
 c4.metric("KD 指標", f"K:{last_row['K']:.0f} / D:{last_row['D']:.0f}")
 
-# --- 9. 🕵️‍♂️ 深度分析報告區 ---
+# --- 10. 🕵️‍♂️ 深度分析報告區 ---
 st.markdown("---")
 st.subheader("🕵️‍♂️ 深度戰略分析報告")
 
@@ -317,7 +377,7 @@ with st.container():
         kd_cross = "黃金交叉 (買進)" if (k_val > d_val and df['K'].iloc[-2] < df['D'].iloc[-2]) else "死亡交叉 (賣出)" if (k_val < d_val and df['K'].iloc[-2] > df['D'].iloc[-2]) else "無交叉"
         st.write(f"**【關鍵訊號】** KD目前呈現 **{kd_cross}**，RSI 為 **{rsi_val:.1f}**。")
 
-# --- 10. 多分頁圖表區 ---
+# --- 11. 多分頁圖表區 ---
 st.markdown("---")
 tab1, tab2, tab3, tab4 = st.tabs([
     "📈 深度技術分析", 
