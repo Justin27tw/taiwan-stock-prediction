@@ -127,41 +127,60 @@ def check_market_status(market):
             return True, "🟢 交易進行中", "#22c55e"
     return False, "🔴 已收盤", "#ef4444"
 
-# --- 中文翻譯與新聞抓取 ---
+# --- 新增：中文翻譯與新聞抓取 (含智慧回退機制) ---
 def get_chinese_name_and_news(raw_name, raw_code):
     zh_name = raw_name
+    translated = False
+    
+    # 1. 嘗試翻譯名稱
     try:
+        # 如果本身不含中文，才進行翻譯
         if not any("\u4e00" <= char <= "\u9fff" for char in raw_name):
             zh_name = GoogleTranslator(source='auto', target='zh-TW').translate(raw_name)
+            translated = True
     except:
         pass
 
-    news_list = []
-    try:
-        query = f"{zh_name} {raw_code}"
-        encoded_query = urllib.parse.quote(query)
-        rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        
-        feed = feedparser.parse(rss_url)
-        sorted_entries = sorted(feed.entries, key=lambda x: x.published_parsed, reverse=True)
-        
-        for entry in sorted_entries[:8]:
-            pub_date = entry.published_parsed
-            if pub_date:
-                dt = datetime(*pub_date[:6])
-                fmt_date = dt.strftime('%Y-%m-%d %H:%M')
-            else:
-                fmt_date = ""
+    # 內部函數：執行新聞搜尋
+    def fetch_news(query_name):
+        n_list = []
+        try:
+            # 搜尋關鍵字：名稱 + 股票代碼
+            query = f"{query_name} {raw_code}"
+            encoded_query = urllib.parse.quote(query)
+            rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
             
-            news_list.append({
-                'title': entry.title,
-                'link': entry.link,
-                'publisher': entry.source.title if hasattr(entry, 'source') else 'Google News',
-                'time': fmt_date
-            })
-    except Exception as e:
-        print(f"News Error: {e}")
-        
+            feed = feedparser.parse(rss_url)
+            sorted_entries = sorted(feed.entries, key=lambda x: x.published_parsed, reverse=True)
+            
+            for entry in sorted_entries[:8]:
+                pub_date = entry.published_parsed
+                if pub_date:
+                    dt = datetime(*pub_date[:6])
+                    fmt_date = dt.strftime('%Y-%m-%d %H:%M')
+                else:
+                    fmt_date = ""
+                
+                n_list.append({
+                    'title': entry.title,
+                    'link': entry.link,
+                    'publisher': entry.source.title if hasattr(entry, 'source') else 'Google News',
+                    'time': fmt_date
+                })
+        except Exception as e:
+            print(f"News Error: {e}")
+        return n_list
+
+    # 2. 第一次嘗試：用翻譯後的中文名抓新聞
+    news_list = fetch_news(zh_name)
+
+    # 3. 判斷機制：如果抓不到新聞，且名稱曾經被翻譯過 -> 視為翻譯錯誤或無結果
+    if not news_list and translated:
+        # 改回用原始英文名抓取
+        news_list = fetch_news(raw_name)
+        # 將顯示名稱改回原本的英文，避免顯示錯誤的中文翻譯
+        zh_name = raw_name
+
     return zh_name, news_list
 
 # --- 白話文分析生成器 (含 AI 判斷依據) ---
@@ -363,7 +382,7 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **功能更新**：\n1. AI 顯示判斷依據\n2. K 線圖顯示現價線 & 十字準星\n3. 新增免責聲明")
+st.sidebar.info("💡 **功能更新**：\n1. 新聞智慧回退 (自動修復翻譯問題)\n2. AI 顯示判斷依據\n3. K 線圖顯示現價線 & 十字準星")
 
 # --- 新增：側邊欄免責聲明 ---
 st.sidebar.markdown("---")
