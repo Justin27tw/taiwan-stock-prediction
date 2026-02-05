@@ -12,6 +12,7 @@ from streamlit_autorefresh import st_autorefresh
 from deep_translator import GoogleTranslator # 新增：翻譯套件
 import feedparser # 新增：RSS 解析套件
 import urllib.parse
+import requests # 記得確認上方有無 import requests
 
 # --- 1. 頁面設定與 CSS 美化 ---
 st.set_page_config(page_title="全球股市 AI 戰情室", layout="wide", page_icon="📈")
@@ -162,59 +163,68 @@ def get_chinese_name_and_news(raw_name, raw_code):
         
     return zh_name, news_list
 
-# --- 3. 核心資料載入 (修復版：解決港股代碼重複拼接問題) ---
+# --- 3. 核心資料載入 (終極修復版：加入瀏覽器偽裝與容錯機制) ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw):
-    # 1. 定義嘗試抓取的 "完整代碼" 清單 (不再使用後綴拼接)
+    # 1. 建立偽裝 Session (解決 Yahoo 阻擋問題)
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    })
+
+    # 2. 定義嘗試抓取的 "完整代碼" 清單
     tickers_to_try = []
-    
     if is_tw:
-        # 台股：嘗試 .TW (上市) 和 .TWO (上櫃)
         tickers_to_try = [f"{stock_code}.TW", f"{stock_code}.TWO"]
     elif "港股" in market_type:
-        # 港股：補零至 4 位數，並加上 .HK
         hk_code = stock_code.zfill(4)
         tickers_to_try = [f"{hk_code}.HK"]
     else:
-        # 美股：直接使用輸入代碼
         tickers_to_try = [stock_code]
 
     ticker = None
     history = pd.DataFrame()
     yf_code_used = ""
 
-    # 2. 迴圈嘗試抓取股價 (History)
+    # 3. 迴圈嘗試抓取股價 (History)
     for yf_code in tickers_to_try:
-        # 注意：這裡直接使用定義好的完整代碼 yf_code，不需再拼接
-        temp_ticker = yf.Ticker(yf_code)
+        # 關鍵：將 session 傳入 Ticker
+        temp_ticker = yf.Ticker(yf_code, session=session)
         try:
-            # 嘗試抓取股價
-            temp_history = temp_ticker.history(period="2y")
-            if not temp_history.empty:
+            # 先試抓 5 天，確認代碼有效 (速度較快)
+            check_data = temp_ticker.history(period="5d")
+            
+            if not check_data.empty:
+                # 代碼有效，抓取完整 2 年數據
+                history = temp_ticker.history(period="2y")
                 ticker = temp_ticker
-                history = temp_history
                 yf_code_used = yf_code
-                break # 成功抓到就跳出迴圈
+                break 
         except Exception as e:
             print(f"嘗試 {yf_code} 失敗: {e}")
             continue
 
-    # 如果嘗試完所有可能性還是空的，回傳 None
     if history.empty:
         return None
 
-    # 3. 獨立抓取基本資料 (Info)
+    # 4. 抓取基本資料 (Info) - 混合使用 info 和 fast_info
     info = {}
+    fast_info = {}
     try:
         info = ticker.info
-    except Exception as e:
-        print(f"⚠️ Warning: 無法抓取 {yf_code_used} 的詳細 info, 使用預設值。錯誤: {e}")
-        info = {}
+    except:
+        pass
+    
+    try:
+        fast_info = ticker.fast_info
+    except:
+        pass
 
-    # 4. 名稱處理
+    # 5. 名稱處理
     stock_name = yf_code_used
     industry = "未知產業"
     
+    # 優先從 info 拿，沒有則從預設值
     long_name = info.get('longName', info.get('shortName', yf_code_used))
     industry = info.get('industry', info.get('sector', 'N/A'))
     
@@ -227,21 +237,30 @@ def load_data(stock_code, market_type, is_tw):
     else:
         stock_name = long_name
 
-    # 5. 執行翻譯與抓新聞
+    # 6. 執行翻譯與抓新聞
     zh_name, news_data = get_chinese_name_and_news(stock_name, stock_code)
 
-    # 6. 整理基本面數據
+    # 7. 整理基本面數據 (增強容錯：若 info 抓不到，嘗試計算或給 N/A)
+    
+    # 嘗試取得市值 (fast_info 通常比較準且不易被擋)
+    market_cap = info.get('marketCap')
+    if market_cap is None and hasattr(fast_info, 'market_cap'):
+        market_cap = fast_info.market_cap
+
+    # 嘗試取得昨收 (用於計算沒有即時股價時的參考)
+    last_price = history['Close'].iloc[-1] if not history.empty else 0
+
     fundamentals = {
         'PE': info.get('trailingPE', 'N/A'),
         'ForwardPE': info.get('forwardPE', 'N/A'),
         'PB': info.get('priceToBook', 'N/A'),
         'Yield': info.get('dividendYield', 0),
-        'MarketCap': info.get('marketCap', 'N/A'),
+        'MarketCap': market_cap if market_cap else 'N/A',
         'ROE': info.get('returnOnEquity', 'N/A'),
         'TargetPrice': info.get('targetMeanPrice', 'N/A')
     }
 
-    # 7. 技術指標計算
+    # 8. 技術指標計算
     df = history.copy()
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
@@ -264,7 +283,7 @@ def load_data(stock_code, market_type, is_tw):
     # OBV (量能)
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
-    # 8. AI 預測 (XGBoost)
+    # 9. AI 預測 (XGBoost)
     pred_price = 0
     try:
         if len(df) > 60:
@@ -278,7 +297,7 @@ def load_data(stock_code, market_type, is_tw):
     except:
         pred_price = df['Close'].iloc[-1]
 
-    # 時間格式
+    # 時間格式處理
     last_time = df.index[-1]
     if last_time.tzinfo is None:
         last_time = pytz.utc.localize(last_time).astimezone(pytz.timezone('Asia/Taipei'))
@@ -287,7 +306,7 @@ def load_data(stock_code, market_type, is_tw):
         
     return {
         'df': df,
-        'info': info,
+        'info': info, # 保留原始 info 以備不時之需
         'name_zh': zh_name,
         'name_en': stock_name,
         'industry': industry,
