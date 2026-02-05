@@ -33,7 +33,7 @@ if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **系統提示**：\n已在 K 線圖加入「目前股價」紅色虛線與標記，方便即時判讀位階。")
+st.sidebar.info("💡 **系統提示**：\n已新增「開盤、最高、最低、收盤」行情看板，讓您精確掌握當日震幅。")
 
 # --- 3. 核心函數：全方位資料抓取 ---
 @st.cache_data
@@ -178,22 +178,46 @@ with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded
 st.title(f"📊 {name} ({stock_code}) 投資戰情室")
 st.caption(f"🕒 資料最後更新：{up_time} | 🏢 產業類別：{industry}")
 
-# 最新數據
-curr = df['Close'].iloc[-1]
-diff = curr - df['Close'].iloc[-2]
-pct = (diff / df['Close'].iloc[-2]) * 100
-vol = df['Volume'].iloc[-1]
-vol_ma = df['VolMA20'].iloc[-1]
-pred_diff = pred_price - curr
-pred_pct = (pred_diff / curr) * 100
+# 取出最新一筆數據
+last_row = df.iloc[-1]
+prev_row = df.iloc[-2]
 
-# 頂部指標卡
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("目前股價", f"{curr:.2f}", f"{diff:.2f} ({pct:.2f}%)")
-c2.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)")
-c3.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K")
-c4.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.1f}")
-c5.metric("KD 指標", f"K:{df['K'].iloc[-1]:.0f} / D:{df['D'].iloc[-1]:.0f}")
+# 價格數據
+curr_price = last_row['Close']
+open_price = last_row['Open']
+high_price = last_row['High']
+low_price = last_row['Low']
+
+# 漲跌計算
+diff = curr_price - prev_row['Close']
+pct = (diff / prev_row['Close']) * 100
+color_diff = "normal"
+if diff > 0: color_diff = "normal" # Streamlit metric 自動會綠色/紅色
+# 註：Streamlit 的 metric delta 顏色：正數綠色，負數紅色 (在台股習慣可能相反，但這是框架預設)
+
+# AI 與量能數據
+vol = last_row['Volume']
+vol_ma = last_row['VolMA20']
+pred_diff = pred_price - curr_price
+pred_pct = (pred_diff / curr_price) * 100
+
+# === 新增：今日行情看板 (OHLC) ===
+st.subheader("📝 今日行情數據")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("開盤價", f"{open_price:.2f}")
+m2.metric("最高價", f"{high_price:.2f}")
+m3.metric("最低價", f"{low_price:.2f}")
+m4.metric("收盤價 (現價)", f"{curr_price:.2f}", f"{diff:.2f} ({pct:.2f}%)")
+
+st.markdown("---")
+
+# === 既有：AI 與技術指標區 ===
+st.subheader("🤖 AI 預測與關鍵指標")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("AI 預測明日", f"{pred_price:.2f}", f"{pred_diff:.2f} ({pred_pct:.2f}%)")
+c2.metric("成交量", f"{int(vol/1000):,}K", f"{(vol-vol_ma)/1000:.1f}K (vs均量)")
+c3.metric("RSI (14)", f"{last_row['RSI']:.1f}")
+c4.metric("KD 指標", f"K:{last_row['K']:.0f} / D:{last_row['D']:.0f}")
 
 # --- 6. 🕵️‍♂️ 深度分析報告區 ---
 st.markdown("---")
@@ -207,11 +231,11 @@ d_val = df['D'].iloc[-1]
 rsi_val = df['RSI'].iloc[-1]
 
 trend_text = ""
-if curr > ma20 and curr > ma60:
+if curr_price > ma20 and curr_price > ma60:
     trend_text = "✅ **多頭排列**：股價位於月線與季線之上，中長期趨勢看漲，主力控盤穩健。"
-elif curr < ma20 and curr < ma60:
+elif curr_price < ma20 and curr_price < ma60:
     trend_text = "❌ **空頭排列**：股價遭月線與季線反壓，趨勢偏弱，建議保守看待。"
-elif curr > ma60 and curr < ma20:
+elif curr_price > ma60 and curr_price < ma20:
     trend_text = "⚠️ **回檔整理**：股價跌破月線但守住季線，屬於漲多回檔，觀察季線支撐。"
 else:
     trend_text = "⚠️ **反彈格局**：股價站上月線但仍受制於季線，尚未完全翻多。"
@@ -250,7 +274,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📰 相關新聞"
 ])
 
-# === Tab 1: 技術分析 (新增現價標註) ===
+# === Tab 1: 技術分析 (維持現價標註) ===
 with tab1:
     days_map = {"近 3 個月": 90, "近 6 個月": 180, "近 1 年": 365, "近 3 年": 1095, "全部": 9999}
     start_dt = datetime.now(pytz.timezone('Asia/Taipei')) - timedelta(days=days_map[date_option])
@@ -268,7 +292,7 @@ with tab1:
     fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA20'], name="月線 (20MA)", line=dict(color='orange', width=1.5)), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_view.index, y=df_view['MA60'], name="季線 (60MA)", line=dict(color='blue', width=1.5)), row=1, col=1)
 
-    # --- 新增：現價標註 (水平線 + 氣泡) ---
+    # --- 現價標註 ---
     last_idx = df_view.index[-1]
     last_val = df_view['Close'].iloc[-1]
     
@@ -280,7 +304,7 @@ with tab1:
         line=dict(color="red", width=1, dash="dash"),
         row=1, col=1
     )
-    # 標記點與文字
+    # 標記點
     fig.add_trace(go.Scatter(
         x=[last_idx], y=[last_val],
         mode="markers+text",
@@ -290,7 +314,7 @@ with tab1:
         name="目前股價",
         showlegend=False
     ), row=1, col=1)
-    # ------------------------------------
+    # ----------------
     
     # 2. 成交量
     colors = ['red' if r['Open'] - r['Close'] >= 0 else 'green' for i, r in df_view.iterrows()]
@@ -372,7 +396,7 @@ with tab3:
     else:
         st.warning("暫無國際指數資料")
 
-# === Tab 4: 新聞 (防呆機制) ===
+# === Tab 4: 新聞 ===
 with tab4:
     st.subheader(f"📰 {name} 最新動態")
     if news:
