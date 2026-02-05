@@ -290,27 +290,25 @@ vol_ma = last_row['VolMA20']
 pred_diff = pred_price - curr_price
 pred_pct = (pred_diff / curr_price) * 100
 
-# --- 7. 🏆 置頂大看板 (狀態加強版) ---
+# --- 7. 🏆 置頂大看板 (修正縮排問題) ---
 st.title(f"📊 {name} ({stock_code})")
 
+# 這裡移除了 f-string 中的所有縮排，確保 HTML 能正確渲染
 st.markdown(f"""
 <div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; margin-bottom: 25px; border: 2px solid {main_color}; text-align: center; position: relative;">
-    
-    <div style="position: absolute; top: 10px; right: 15px; text-align: right;">
-        <div style="font-size: 0.9rem; color: #6b7280; font-weight: bold;">🇹🇼 台北時間</div>
-        <div style="font-size: 1.1rem; color: #333; font-family: monospace;">{current_time_str}</div>
-        <div style="margin-top: 5px; background-color: {status_color}; color: white; padding: 2px 8px; border-radius: 5px; font-size: 0.8rem; display: inline-block;">
-            {status_text}
-        </div>
-    </div>
-
-    <span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">{price_label}</span>
-    <h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">{curr_price:.2f}</h1>
-    <h2 style="color: {main_color}; margin: 0; font-size: 2rem;">{arrow} {abs(diff):.2f} ({abs(pct):.2f}%)</h2>
-    
-    <p style="color: #6b7280; font-size: 0.9rem; margin-top: 15px;">
-        📅 數據更新時間: {data_time} | 昨收: {prev_row['Close']:.2f}
-    </p>
+<div style="position: absolute; top: 10px; right: 15px; text-align: right;">
+<div style="font-size: 0.9rem; color: #6b7280; font-weight: bold;">🇹🇼 台北時間</div>
+<div style="font-size: 1.1rem; color: #333; font-family: monospace;">{current_time_str}</div>
+<div style="margin-top: 5px; background-color: {status_color}; color: white; padding: 2px 8px; border-radius: 5px; font-size: 0.8rem; display: inline-block;">
+{status_text}
+</div>
+</div>
+<span style="color: {main_color}; font-size: 1.2rem; font-weight: bold;">{price_label}</span>
+<h1 style="color: {main_color}; margin: 5px 0; font-size: 4.5rem; font-weight: 800; line-height: 1;">{curr_price:.2f}</h1>
+<h2 style="color: {main_color}; margin: 0; font-size: 2rem;">{arrow} {abs(diff):.2f} ({abs(pct):.2f}%)</h2>
+<p style="color: #6b7280; font-size: 0.9rem; margin-top: 15px;">
+📅 數據更新時間: {data_time} | 昨收: {prev_row['Close']:.2f}
+</p>
 </div>
 """, unsafe_allow_html=True)
 
