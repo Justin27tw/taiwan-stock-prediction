@@ -10,14 +10,33 @@ import pytz
 import twstock
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="台股 AI 戰情室 (台股配色版)", layout="wide")
+st.set_page_config(page_title="全球股市 AI 戰情室", layout="wide")
 
 # --- 2. 左側邊欄：設定 ---
 st.sidebar.title("🔍 戰情控制室")
 
-# 輸入框 (防止 ID 衝突)
-stock_code = st.sidebar.text_input("輸入台股代碼", "2603", key="sidebar_stock_code") 
-full_code = f"{stock_code}.TW"
+# 市場選擇 (新增)
+market_type = st.sidebar.selectbox(
+    "選擇市場", 
+    ["🇹🇼 台股", "🇭🇰 港股", "🇺🇸 美股"],
+    index=0,
+    key="market_selector"
+)
+
+# 輸入框
+default_code = "2603" if market_type == "🇹🇼 台股" else "9988" if market_type == "🇭🇰 港股" else "NVDA"
+stock_code = st.sidebar.text_input("輸入股票代碼", default_code, key="sidebar_stock_code") 
+
+# 自動處理代碼後綴
+if "台股" in market_type:
+    full_code = f"{stock_code}.TW"
+    is_tw_stock = True
+elif "港股" in market_type:
+    full_code = f"{stock_code}.HK"
+    is_tw_stock = False
+else:
+    full_code = stock_code # 美股通常不用後綴
+    is_tw_stock = False
 
 # 日期區間篩選
 st.sidebar.subheader("📅 趨勢圖區間")
@@ -33,29 +52,32 @@ if st.sidebar.button("🔄 立即全盤掃描", key="sidebar_refresh_btn"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **顯示設定**：\n已切換為「台股配色模式」\n🔴 紅色 = 上漲 (Bullish)\n🟢 綠色 = 下跌 (Bearish)")
+st.sidebar.info("💡 **顯示設定**：\n已切換為「台股/亞股配色模式」\n🔴 紅色 = 上漲 (Bullish)\n🟢 綠色 = 下跌 (Bearish)")
 
 # --- 3. 核心函數：全方位資料抓取 ---
 @st.cache_data
-def load_comprehensive_data(raw_code, yf_code):
-    # 1. 優先解決名稱問題 (使用 twstock)
+def load_comprehensive_data(raw_code, yf_code, is_taiwan):
+    # 1. 名稱抓取邏輯
     stock_name = raw_code
     industry = "未知產業"
     
-    try:
-        if raw_code in twstock.codes:
-            info_tw = twstock.codes[raw_code]
-            stock_name = info_tw.name
-            industry = info_tw.type
-    except:
-        pass
+    # 只在台股時使用 twstock，避免港美股報錯
+    if is_taiwan:
+        try:
+            if raw_code in twstock.codes:
+                info_tw = twstock.codes[raw_code]
+                stock_name = info_tw.name
+                industry = info_tw.type
+        except:
+            pass
 
     # 2. 透過 yfinance 抓取數據
     ticker = yf.Ticker(yf_code)
     
     try:
         info_yf = ticker.info
-        if stock_name == raw_code:
+        # 如果是港美股，或者 twstock 沒抓到，就用 yfinance 的資料
+        if not is_taiwan or stock_name == raw_code:
             stock_name = info_yf.get('longName') or info_yf.get('shortName') or raw_code
         if industry == "未知產業":
             industry = info_yf.get('industry', 'N/A')
@@ -77,8 +99,8 @@ def load_comprehensive_data(raw_code, yf_code):
     indices = {
         'S&P 500 (美)': '^GSPC',
         '費城半導體 (美)': '^SOX',
-        '日經 225 (日)': '^N225',
-        'KOSPI (韓)': '^KS11'
+        '恒生指數 (港)': '^HSI',
+        '上證指數 (中)': '000001.SS'
     }
     
     global_data = {}
@@ -116,8 +138,7 @@ def load_comprehensive_data(raw_code, yf_code):
     
     # 乖離率
     df['Bias20'] = ((df['Close'] - df['MA20']) / df['MA20']) * 100
-    df['Bias60'] = ((df['Close'] - df['MA60']) / df['MA60']) * 100
-
+    
     # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -152,6 +173,7 @@ def load_comprehensive_data(raw_code, yf_code):
 
     # 時間格式
     last_time = df.index[-1]
+    # 統一轉為台北時間顯示 (港股與台股時區相同，美股則換算為台灣時間)
     if last_time.tzinfo is None:
         tz = pytz.timezone('Asia/Taipei')
         last_time = last_time.replace(tzinfo=pytz.utc).astimezone(tz)
@@ -164,11 +186,12 @@ def load_comprehensive_data(raw_code, yf_code):
 # --- 4. 主程式執行 ---
 
 with st.status(f"🚀 正在啟動 {stock_code} 深度分析引擎...", expanded=True) as status:
-    data = load_comprehensive_data(stock_code, full_code)
+    # 傳入 is_taiwan 參數以區分邏輯
+    data = load_comprehensive_data(stock_code, full_code, is_tw_stock)
     
     if data[0] is None:
         status.update(label="❌ 查無資料", state="error")
-        st.error(f"找不到代碼 {stock_code}，請確認是否為上市櫃股票。")
+        st.error(f"找不到代碼 {stock_code}，請確認代碼與市場選擇是否正確。")
         st.stop()
         
     df, name, pred_price, news, up_time, fin_df, bal_df, glob_data, industry = data
@@ -188,7 +211,7 @@ low_price = last_row['Low']
 diff = curr_price - prev_row['Close']
 pct = (diff / prev_row['Close']) * 100
 
-# 台股配色邏輯 (紅漲綠跌)
+# 台股/亞股配色邏輯 (紅漲綠跌)
 if diff > 0:
     main_color = "#e11d48" # 亮紅
     bg_color = "rgba(225, 29, 72, 0.1)"
@@ -212,6 +235,7 @@ pred_pct = (pred_diff / curr_price) * 100
 st.title(f"📊 {name} ({stock_code})")
 
 # 使用 HTML 製作超大報價看板
+# 修正 NameError: 使用 up_time 而非 update_time
 st.markdown(f"""
 <div style="
     background-color: {bg_color};
@@ -229,13 +253,12 @@ st.markdown(f"""
         {arrow} {abs(diff):.2f} ({abs(pct):.2f}%)
     </h2>
     <p style="color: #6b7280; font-size: 0.9rem; margin-top: 10px;">
-        🕒 資料時間: {update_time} | 昨收: {prev_row['Close']:.2f}
+        🕒 資料時間: {up_time} | 昨收: {prev_row['Close']:.2f}
     </p>
 </div>
 """, unsafe_allow_html=True)
 
 # --- 7. 詳細行情數據 (OHLC) ---
-# 注意：使用 delta_color="inverse" 讓 st.metric 變為 紅漲綠跌
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("開盤價", f"{open_price:.2f}")
 m2.metric("最高價", f"{high_price:.2f}")
@@ -265,38 +288,38 @@ rsi_val = df['RSI'].iloc[-1]
 
 trend_text = ""
 if curr_price > ma20 and curr_price > ma60:
-    trend_text = "✅ **多頭排列**：股價位於月線與季線之上，中長期趨勢看漲，主力控盤穩健。"
+    trend_text = "✅ **多頭排列**：股價位於月線與季線之上，趨勢偏多。"
 elif curr_price < ma20 and curr_price < ma60:
-    trend_text = "❌ **空頭排列**：股價遭月線與季線反壓，趨勢偏弱，建議保守看待。"
+    trend_text = "❌ **空頭排列**：股價遭月線與季線反壓，趨勢偏空。"
 elif curr_price > ma60 and curr_price < ma20:
-    trend_text = "⚠️ **回檔整理**：股價跌破月線但守住季線，屬於漲多回檔，觀察季線支撐。"
+    trend_text = "⚠️ **回檔整理**：跌破月線但守住季線，長多短空。"
 else:
-    trend_text = "⚠️ **反彈格局**：股價站上月線但仍受制於季線，尚未完全翻多。"
+    trend_text = "⚠️ **反彈格局**：站上月線但受制於季線，短多長空。"
 
 bias_text = ""
 if bias20 > 10:
-    bias_text = "🔥 **乖離過大**：股價離月線太遠（乖離率 > 10%），短線容易拉回修正，不宜追高。"
+    bias_text = "🔥 **乖離過大**：股價離月線太遠，不宜追高。"
 elif bias20 < -10:
-    bias_text = "💎 **負乖離過大**：股價超跌（乖離率 < -10%），隨時有機會出現技術性反彈。"
+    bias_text = "💎 **負乖離過大**：股價超跌，醞釀反彈。"
 else:
-    bias_text = "⚖️ **乖離正常**：股價沿著均線穩步運行，無過熱或超跌跡象。"
+    bias_text = "⚖️ **乖離正常**：股價沿著均線穩步運行。"
 
 ai_text = ""
 if pred_pct > 1.5:
-    ai_text = f"🚀 **AI 強力看漲**：模型預測明日有 {pred_pct:.2f}% 的潛在漲幅，動能強勁。"
+    ai_text = f"🚀 **AI 強力看漲**：預測明日漲幅 > 1.5%。"
 elif pred_pct < -1.5:
-    ai_text = f"🩸 **AI 示警風險**：模型預測明日可能修正 {abs(pred_pct):.2f}%，留意賣壓。"
+    ai_text = f"🩸 **AI 示警風險**：預測明日跌幅 > 1.5%。"
 else:
-    ai_text = "⚖️ **AI 預測盤整**：預期波動不大，建議區間操作。"
+    ai_text = "⚖️ **AI 預測盤整**：預期波動不大。"
 
 with st.container():
     col_a1, col_a2 = st.columns(2)
     with col_a1:
-        st.info(f"**【趨勢結構】**\n\n{trend_text}\n\n**【乖離檢測】**\n\n{bias_text}")
+        st.info(f"**【趨勢結構】** {trend_text}\n\n**【乖離檢測】** {bias_text}")
     with col_a2:
-        st.success(f"**【AI 觀點】**\n\n{ai_text}")
-        kd_cross = "黃金交叉 (買進訊號)" if (k_val > d_val and df['K'].iloc[-2] < df['D'].iloc[-2]) else "死亡交叉 (賣出訊號)" if (k_val < d_val and df['K'].iloc[-2] > df['D'].iloc[-2]) else "無交叉"
-        st.write(f"**【關鍵訊號】** KD目前呈現 **{kd_cross}**，RSI 數值為 **{rsi_val:.1f}**。")
+        st.success(f"**【AI 觀點】** {ai_text}")
+        kd_cross = "黃金交叉 (買進)" if (k_val > d_val and df['K'].iloc[-2] < df['D'].iloc[-2]) else "死亡交叉 (賣出)" if (k_val < d_val and df['K'].iloc[-2] > df['D'].iloc[-2]) else "無交叉"
+        st.write(f"**【關鍵訊號】** KD目前呈現 **{kd_cross}**，RSI 為 **{rsi_val:.1f}**。")
 
 # --- 10. 多分頁圖表區 ---
 st.markdown("---")
@@ -307,7 +330,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📰 相關新聞"
 ])
 
-# === Tab 1: 技術分析 (維持現價標註) ===
+# === Tab 1: 技術分析 (現價標註) ===
 with tab1:
     days_map = {"近 3 個月": 90, "近 6 個月": 180, "近 1 年": 365, "近 3 年": 1095, "全部": 9999}
     start_dt = datetime.now(pytz.timezone('Asia/Taipei')) - timedelta(days=days_map[date_option])
@@ -329,23 +352,8 @@ with tab1:
     last_idx = df_view.index[-1]
     last_val = df_view['Close'].iloc[-1]
     
-    fig.add_shape(
-        type="line", 
-        x0=df_view.index[0], x1=df_view.index[-1], 
-        y0=last_val, y1=last_val,
-        line=dict(color="red", width=1, dash="dash"),
-        row=1, col=1
-    )
-    fig.add_trace(go.Scatter(
-        x=[last_idx], y=[last_val],
-        mode="markers+text",
-        marker=dict(color="red", size=8),
-        text=[f"現價 {last_val:.2f}"],
-        textposition="top center",
-        name="目前股價",
-        showlegend=False
-    ), row=1, col=1)
-    # ----------------
+    fig.add_shape(type="line", x0=df_view.index[0], x1=df_view.index[-1], y0=last_val, y1=last_val, line=dict(color="red", width=1, dash="dash"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=[last_idx], y=[last_val], mode="markers+text", marker=dict(color="red", size=8), text=[f"現價 {last_val:.2f}"], textposition="top center", name="目前股價", showlegend=False), row=1, col=1)
     
     # 2. 成交量
     colors = ['red' if r['Open'] - r['Close'] >= 0 else 'green' for i, r in df_view.iterrows()]
@@ -362,15 +370,6 @@ with tab1:
     
     fig.update_layout(height=1100, xaxis_rangeslider_visible=False, title_text=f"<b>{name} ({stock_code}) 綜合技術分析圖表</b>")
     st.plotly_chart(fig, use_container_width=True)
-    
-    with st.expander("🎓 圖表教學：如何看懂這些線？", expanded=False):
-        st.markdown("""
-        * **現價紅線**：畫面上的紅色虛線與標記點，代表這檔股票現在的價格位置。
-        * **K線與均線**：K 線代表股價，月線(橘)代表短期成本，季線(藍)代表長期成本。站上季線通常代表多頭。
-        * **成交量**：紅柱代表跌、綠柱代表漲（台股慣例紅色為漲，若設定不同請見諒）。有量才有價。
-        * **KD 指標**：80以上過熱（可能跌），20以下超賣（可能漲）。黃金交叉（橘穿藍往上）為買點。
-        * **OBV**：如果股價盤整但 OBV 往上衝，代表有人在偷偷吃貨。
-        """)
 
 # === Tab 2: 基本面 ===
 with tab2:
@@ -378,21 +377,13 @@ with tab2:
     if not fin_df.empty:
         rev_col = [c for c in fin_df.columns if 'Total Revenue' in c or 'Revenue' in c]
         inc_col = [c for c in fin_df.columns if 'Net Income' in c]
-        
         if rev_col and inc_col:
             fin_plot = fin_df.iloc[:4]
             fig_fin = go.Figure()
-            fig_fin.add_trace(go.Bar(x=fin_plot.index.astype(str), y=fin_plot[rev_col[0]], name="總營收 (Revenue)"))
-            fig_fin.add_trace(go.Scatter(x=fin_plot.index.astype(str), y=fin_plot[inc_col[0]], name="稅後淨利 (Net Income)", yaxis='y2', line=dict(color='red', width=3)))
-            
-            fig_fin.update_layout(
-                title_text="<b>近年營收與獲利趨勢圖</b>",
-                yaxis=dict(title="營收金額"), 
-                yaxis2=dict(title="淨利金額", overlaying='y', side='right'),
-                legend=dict(orientation="h", y=1.1)
-            )
+            fig_fin.add_trace(go.Bar(x=fin_plot.index.astype(str), y=fin_plot[rev_col[0]], name="總營收"))
+            fig_fin.add_trace(go.Scatter(x=fin_plot.index.astype(str), y=fin_plot[inc_col[0]], name="稅後淨利", yaxis='y2', line=dict(color='red', width=3)))
+            fig_fin.update_layout(yaxis=dict(title="營收"), yaxis2=dict(title="淨利", overlaying='y', side='right'), legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig_fin, use_container_width=True)
-            st.caption("註：柱狀圖為營收，紅線為公司真正賺進口袋的淨利。")
         else:
             st.warning("無法解析財報欄位")
     else:
@@ -400,7 +391,7 @@ with tab2:
 
 # === Tab 3: 國際連動 ===
 with tab3:
-    st.subheader("🌏 國際股市連動性矩陣")
+    st.subheader("🌏 國際股市連動性")
     if glob_data:
         stock_close = df['Close'].tz_localize(None)
         target_len = min(len(stock_close), 250)
@@ -409,44 +400,31 @@ with tab3:
         for name, series in glob_data.items():
             aligned = series.reindex(base_series.index, method='ffill')
             corrs[name] = base_series.corr(aligned)
-
         cols = st.columns(len(corrs))
         for i, (name, val) in enumerate(corrs.items()):
             cols[i].metric(name, f"{val:.2f}", delta="高度正相關" if val > 0.7 else "負相關" if val < -0.3 else None)
-
         fig_glob = go.Figure()
         norm_base = (base_series / base_series.iloc[0]) * 100
-        fig_glob.add_trace(go.Scatter(x=base_series.index, y=norm_base, name=f"{stock_code} (本股)", line=dict(color='red', width=3)))
+        fig_glob.add_trace(go.Scatter(x=base_series.index, y=norm_base, name=f"{stock_code}", line=dict(color='red', width=3)))
         for name, series in glob_data.items():
             aligned = series.reindex(base_series.index, method='ffill')
             norm = (aligned / aligned.iloc[0]) * 100
             fig_glob.add_trace(go.Scatter(x=base_series.index, y=norm, name=name, line=dict(dash='dot')))
-            
-        fig_glob.update_layout(title_text="<b>近一年走勢疊加比較圖 (基期=100)</b>")
         st.plotly_chart(fig_glob, use_container_width=True)
     else:
         st.warning("暫無國際指數資料")
 
-# === Tab 4: 新聞 (防呆機制) ===
+# === Tab 4: 新聞 ===
 with tab4:
     st.subheader(f"📰 {name} 最新動態")
     if news:
         for n in news[:8]:
             try:
                 raw_time = n.get('providerPublishTime')
-                if raw_time:
-                    pub_time = pd.to_datetime(raw_time, unit='s').strftime('%Y-%m-%d %H:%M')
-                else:
-                    pub_time = "未知時間"
-            except:
-                pub_time = "未知時間"
-            
-            title = n.get('title', '無標題')
-            link = n.get('link', '#')
-            publisher = n.get('publisher', '未知來源')
-            
-            st.markdown(f"➤ **[{title}]({link})**")
-            st.caption(f"來源：{publisher} | 時間：{pub_time}")
+                pub_time = pd.to_datetime(raw_time, unit='s').strftime('%Y-%m-%d %H:%M') if raw_time else "未知時間"
+            except: pub_time = "未知時間"
+            st.markdown(f"➤ **[{n.get('title', '無標題')}]({n.get('link', '#')})**")
+            st.caption(f"來源：{n.get('publisher', '未知')} | 時間：{pub_time}")
             st.markdown("---")
     else:
         st.write("暫無相關新聞")
