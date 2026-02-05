@@ -324,7 +324,7 @@ else:
     st.sidebar.warning(f"💤 市場已收盤 | {msg}")
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **功能更新**：\n1. AI 綜合白話分析 (趨勢/熱度)\n2. 新聞強制按時間排序\n3. 解決資料抓取問題")
+st.sidebar.info("💡 **功能更新**：\n1. AI 綜合白話分析\n2. 恢復 K 線圖時間篩選 (Range Slider)\n3. 新聞依時間排序")
 
 # --- 5. 主程式 ---
 if stock_input:
@@ -415,7 +415,31 @@ if stock_input:
         fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='blue', width=1.5), name="季線"), row=1, col=1)
         colors = ['red' if r['Open'] < r['Close'] else 'green' for i, r in df.iterrows()]
         fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name="成交量"), row=2, col=1)
-        fig.update_layout(height=600, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=30, b=0), xaxis_rangeslider_visible=False)
+        
+        # --- 修正：恢復時間軸篩選器 (Range Slider & Selector) ---
+        fig.update_layout(
+            height=600, 
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=0, r=0, t=30, b=0),
+            xaxis=dict(
+                rangeslider=dict(visible=True), # 顯示底部拖拉條
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1月", step="month", stepmode="backward"),
+                        dict(count=3, label="3月", step="month", stepmode="backward"),
+                        dict(count=6, label="6月", step="month", stepmode="backward"),
+                        dict(count=1, label="YTD", step="year", stepmode="todate"),
+                        dict(step="all", label="全部")
+                    ]),
+                    bgcolor="#1e293b",
+                    activecolor="#3b82f6",
+                    font=dict(color="white")
+                ),
+                type="date"
+            )
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
