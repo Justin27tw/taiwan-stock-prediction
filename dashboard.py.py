@@ -162,7 +162,49 @@ def search_symbols(query):
     except Exception as e:
         print(f"Search Error: {e}")
     return []
-
+def get_market_indices(market_type):
+    """
+    根據選擇的市場抓取對應的指數數據
+    """
+    # 定義各市場的指數代碼
+    # 台股: 加權指數 (^TWII)
+    # 港股: 恒生指數 (^HSI)
+    # 美股: 道瓊 (^DJI), 納斯達克 (^IXIC), 標普500 (^GSPC)
+    index_map = {
+        "台股": {"加權指數 (TAIEX)": "^TWII"},
+        "港股": {"恒生指數 (HSI)": "^HSI"},
+        "美股": {"道瓊工業": "^DJI", "納斯達克": "^IXIC", "標普 500": "^GSPC"}
+    }
+    
+    # 判斷目前選擇的市場包含哪個關鍵字
+    target_indices = {}
+    for key in index_map:
+        if key in market_type:
+            target_indices = index_map[key]
+            break
+            
+    results = []
+    if target_indices:
+        for name, ticker_code in target_indices.items():
+            try:
+                ticker = yf.Ticker(ticker_code)
+                # 抓取最近 2 天資料以計算漲跌
+                hist = ticker.history(period="2d")
+                if len(hist) >= 2:
+                    last_price = hist['Close'].iloc[-1]
+                    prev_price = hist['Close'].iloc[-2]
+                    change = last_price - prev_price
+                    pct = (change / prev_price) * 100
+                    results.append({
+                        "name": name,
+                        "price": last_price,
+                        "change": change,
+                        "pct": pct
+                    })
+            except Exception as e:
+                print(f"Index Fetch Error ({name}): {e}")
+            
+    return results
 # --- 中文翻譯與新聞抓取 (含智慧回退機制) ---
 def get_chinese_name_and_news(raw_name, raw_code):
     zh_name = raw_name
@@ -459,6 +501,22 @@ st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究與技
 
 # --- 5. 主程式 ---
 if stock_input:
+    # 1. 顯示大盤指數
+    market_indices = get_market_indices(market_type)
+    if market_indices:
+        # 使用 expander 或直接顯示，這裡選擇直接顯示在頂部
+        cols = st.columns(len(market_indices))
+        for i, idx in enumerate(market_indices):
+            color = "#ef4444" if idx['change'] > 0 else "#22c55e" if idx['change'] < 0 else "#94a3b8"
+            arrow = "▲" if idx['change'] > 0 else "▼" if idx['change'] < 0 else "-"
+            with cols[i]:
+                st.markdown(f"""
+                <div style="background-color: #1e293b; border: 1px solid rgba(255,255,255,0.1); padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 10px;">
+                    <div style="font-size: 0.8rem; color: #cbd5e1;">{idx['name']}</div>
+                    <div style="font-size: 1.1rem; font-weight: bold; color: #fff;">{idx['price']:,.2f}</div>
+                    <div style="font-size: 0.8rem; color: {color};">{arrow} {abs(idx['change']):.2f} ({abs(idx['pct']):.2f}%)</div>
+                </div>
+                """, unsafe_allow_html=True)
     data = load_data(stock_input, market_type, is_tw)
     
     if not data:
