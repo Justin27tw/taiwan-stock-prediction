@@ -319,8 +319,6 @@ def generate_layman_analysis(df, fund, pred_price, date_str):
 # --- 3. 核心資料載入 ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw, ai_date_str):
-    # [新增] 1. 記錄「真正執行此函數」當下的時間
-    # 由於此函數被緩存，只有當緩存過期重新執行時，這個時間才會更新
     fetch_time = datetime.now()
 
     tickers_to_try = []
@@ -357,7 +355,10 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
     try: info = ticker.info
     except: pass
     
-    # 建立基本面字典 (用於表格顯示，鍵值為中文)
+    # [新增] 抓取公司/指數簡介
+    # 嘗試抓取 longBusinessSummary，若無則抓 description，再沒有則顯示預設文字
+    summary = info.get('longBusinessSummary', info.get('description', '暫無相關簡介資訊。'))
+
     fundamentals = {
         '本益比 (P/E)': info.get('trailingPE', 'N/A'),
         '預估本益比 (Fwd P/E)': info.get('forwardPE', 'N/A'),
@@ -420,43 +421,44 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         'ai_msg': ai_msg,
         'buy_vol': buy_vol,
         'sell_vol': sell_vol,
-        'fetch_time': fetch_time  # [新增] 2. 將抓取時間回傳
+        'fetch_time': fetch_time,
+        'summary': summary # [新增] 回傳簡介
     }
 
 # --- 4. 側邊欄 ---
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
-# 自動刷新 (1秒一次)
-st_autorefresh(interval=1000, key="auto_refresh")
+# [重要修改] 使用 st.fragment 獨立刷新側邊欄的倒數計時器
+# run_every=1 代表這個小區塊會每秒自己刷新，但不會影響主畫面
+@st.fragment(run_every=1)
+def show_sidebar_timers(market_type, data_fetch_time):
+    # 1. 市場開收盤倒數
+    is_open, time_msg, _ = get_market_timing_info(market_type)
+    status_color = "#22c55e" if is_open else "#ef4444"
+    status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
 
-# 獲取進階時間資訊
-is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
-
-# [新增] 數據更新倒數計時邏輯
-if 'next_update_time' not in st.session_state:
-    st.session_state.next_update_time = datetime.now() + timedelta(seconds=60)
-
-seconds_to_update = (st.session_state.next_update_time - datetime.now()).total_seconds()
-if seconds_to_update <= 0:
-    # 時間到，重置計時器 (此時 load_data 的 ttl 也過期，會自動抓新資料)
-    st.session_state.next_update_time = datetime.now() + timedelta(seconds=60)
-    seconds_to_update = 60
-
-# 顯示倒數計時與狀態
-status_color = "#22c55e" if is_open else "#ef4444"
-status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
-
-st.sidebar.markdown(f"""
-<div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 5px solid {status_color}; margin-bottom: 20px;">
-    <div style="font-weight: bold; font-size: 1.1rem; color: #f8fafc; margin-bottom: 5px;">{status_text}</div>
-    <div style="font-size: 0.9rem; color: #cbd5e1;">⏳ {time_msg}</div>
-</div>
-""", unsafe_allow_html=True)
-
-# [修正] 移除原本獨立的倒數計時邏輯
-# [新增] 建立一個空的佔位符，稍後在主程式計算出準確時間後再填入
-timer_placeholder = st.sidebar.empty()
+    st.markdown(f"""
+    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 5px solid {status_color}; margin-bottom: 20px;">
+        <div style="font-weight: bold; font-size: 1.1rem; color: #f8fafc; margin-bottom: 5px;">{status_text}</div>
+        <div style="font-size: 0.9rem; color: #cbd5e1;">⏳ {time_msg}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 2. 數據更新倒數 (如果有傳入資料抓取時間)
+    if data_fetch_time:
+        seconds_elapsed = (datetime.now() - data_fetch_time).total_seconds()
+        seconds_remaining = int(60 - seconds_elapsed)
+        if seconds_remaining < 0: seconds_remaining = 0
+        
+        st.markdown(f"""
+        <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
+            <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
+            <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{seconds_remaining} 秒</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("等待數據載入...")
 
 default_code = "2330"
 if "美股" in market_type: default_code = "NVDA"
@@ -480,32 +482,25 @@ st.sidebar.markdown("---")
 st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
 
 # --- 5. 主程式 ---
+# [重要修改] 全頁刷新頻率改為 60秒 (為了更新數據)，而不是1秒
+st_autorefresh(interval=60000, key="data_refresh")
+
+# 獲取日期字串供 AI 報告使用 (但不在此處顯示倒數)
+_, _, ai_date_str = get_market_timing_info(market_type)
+
 if stock_input:
-    # 載入資料 (如果緩存沒過期，會拿到舊的 fetch_time；過期則會拿到當下新的 fetch_time)
     data = load_data(stock_input, market_type, is_tw, ai_date_str)
     
     if not data:
         st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
+        # 即使找不到資料，也要顯示倒數計時器 (傳入 None 表示沒資料時間)
+        show_sidebar_timers(market_type, None)
         st.stop()
 
-    # [新增] 計算並顯示真實的倒數時間
-    # 邏輯：(現在時間 - 資料上次抓取的時間) = 資料已經存在的時間
-    # 剩餘時間 = 60秒 - 資料已經存在的時間
-    seconds_elapsed = (datetime.now() - data['fetch_time']).total_seconds()
-    seconds_remaining = int(60 - seconds_elapsed)
-    
-    # 防止因網路延遲導致變成負數 (顯示 0 即可)
-    if seconds_remaining < 0:
-        seconds_remaining = 0
-        
-    # 將計算結果填入側邊欄的佔位符
-    timer_placeholder.markdown(f"""
-    <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
-        <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
-        <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{seconds_remaining} 秒</div>
-    </div>
-    """, unsafe_allow_html=True)
-        
+    # [重要修改] 在這裡呼叫側邊欄的 fragment 函數，傳入真正的 fetch_time
+    # 這會讓側邊欄每秒自己動，而主程式(下方圖表)保持靜止
+    show_sidebar_timers(market_type, data['fetch_time'])
+
     df = data['df']
     last = df.iloc[-1]
     prev = df.iloc[-2]
@@ -531,6 +526,10 @@ if stock_input:
         </div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # [新增] 公司簡介 Expander (放在 Hero 下方)
+    with st.expander("🏢 查看公司/指數簡介 (Business Summary)"):
+        st.markdown(f"<div style='line-height: 1.6; color: #e2e8f0;'>{data['summary']}</div>", unsafe_allow_html=True)
 
     total_est_vol = data['buy_vol'] + data['sell_vol']
     if total_est_vol > 0:
@@ -600,7 +599,6 @@ if stock_input:
     pred_diff = data['pred'] - last['Close']
     card(c1, f"AI 預測{ai_date_str}價格", f"{data['pred']:.2f}", f"{'▲' if pred_diff>0 else '▼'} {abs((pred_diff/last['Close'])*100):.2f}%")
     
-    # [修正] 這裡改回使用 data['info'] (原始英文鍵值) 讀取數據，確保卡片能顯示
     pe = data['info'].get('trailingPE', 'N/A')
     pe_str = f"{pe:.1f}" if isinstance(pe, (int, float)) else "N/A"
     card(c2, "本益比 (P/E)", pe_str)
@@ -631,8 +629,6 @@ if stock_input:
 
     with tab3:
         st.subheader("📋 關鍵財務數據")
-        
-        # 這裡繼續使用 data['fund'] (中文鍵值)，因為表格需要顯示中文
         fund_df = pd.DataFrame(list(data['fund'].items()), columns=['指標', '數值'])
         fund_df['數值'] = fund_df['數值'].astype(str)
         st.dataframe(fund_df, hide_index=True, use_container_width=True)
