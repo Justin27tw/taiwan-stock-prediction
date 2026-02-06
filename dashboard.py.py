@@ -747,14 +747,13 @@ page_selection = st.sidebar.radio("選擇功能模式", page_options)
 
 st.sidebar.markdown("---")
 
-# 定義時間顯示小工具 (修正版：移除 st.sidebar 前綴，避免 Fragment 報錯)
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
     is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
     status_color = "#22c55e" if is_open else "#ef4444"
     status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
 
-    # 注意：這裡改回 st.markdown (不加 sidebar)
+    # 修正：直接使用 st.markdown，因為函式是在 with st.sidebar 下被呼叫的
     st.markdown(f"""
     <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 5px solid {status_color}; margin-bottom: 20px;">
         <div style="font-weight: bold; font-size: 1.1rem; color: #f8fafc; margin-bottom: 5px;">{status_text}</div>
@@ -767,7 +766,7 @@ def show_sidebar_timers(market_type, data_fetch_time):
         seconds_remaining = int(60 - seconds_elapsed)
         if seconds_remaining < 0: seconds_remaining = 0
         
-        # 注意：這裡改回 st.markdown (不加 sidebar)
+        # 修正：直接使用 st.markdown
         st.markdown(f"""
         <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
             <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
@@ -775,34 +774,8 @@ def show_sidebar_timers(market_type, data_fetch_time):
         </div>
         """, unsafe_allow_html=True)
     else:
-        # 注意：這裡改回 st.info (不加 sidebar)
+        # 修正：直接使用 st.info
         st.info("等待數據載入...")
-    is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
-    status_color = "#22c55e" if is_open else "#ef4444"
-    status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
-
-    # 注意：這裡改成 st.sidebar.markdown
-    st.sidebar.markdown(f"""
-    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 5px solid {status_color}; margin-bottom: 20px;">
-        <div style="font-weight: bold; font-size: 1.1rem; color: #f8fafc; margin-bottom: 5px;">{status_text}</div>
-        <div style="font-size: 0.9rem; color: #cbd5e1;">⏳ {time_msg}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if data_fetch_time:
-        seconds_elapsed = (datetime.now() - data_fetch_time).total_seconds()
-        seconds_remaining = int(60 - seconds_elapsed)
-        if seconds_remaining < 0: seconds_remaining = 0
-        
-        # 注意：這裡也改成 st.sidebar.markdown
-        st.sidebar.markdown(f"""
-        <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
-            <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
-            <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{seconds_remaining} 秒</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.sidebar.info("等待數據載入...")
 # 初始化變數
 market_type = "🇹🇼 台股"
 stock_input = None
@@ -810,10 +783,6 @@ stock_input = None
 # --- 側邊欄邏輯 ---
 if page_selection == "📈 個股詳細分析":
     market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
-    
-    # 呼叫時間顯示 (先傳入 None 因為還沒開始抓資料)
-    show_sidebar_timers(market_type, datetime.now())
-    
     # 設定預設代碼
     default_code = "2330"
     if "美股" in market_type: default_code = "NVDA"
@@ -839,7 +808,6 @@ if page_selection == "📈 個股詳細分析":
 else:
     # 大盤模式下，顯示簡單資訊
     st.sidebar.info("目前顯示全球主要指數與匯率行情。")
-    show_sidebar_timers("🇹🇼 台股", datetime.now())
 
 st.sidebar.markdown("---")
 st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
