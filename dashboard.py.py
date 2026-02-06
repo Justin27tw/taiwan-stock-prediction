@@ -319,6 +319,10 @@ def generate_layman_analysis(df, fund, pred_price, date_str):
 # --- 3. 核心資料載入 ---
 @st.cache_data(ttl=60)
 def load_data(stock_code, market_type, is_tw, ai_date_str):
+    # [新增] 1. 記錄「真正執行此函數」當下的時間
+    # 由於此函數被緩存，只有當緩存過期重新執行時，這個時間才會更新
+    fetch_time = datetime.now()
+
     tickers_to_try = []
     clean_input = stock_code.strip().upper()
     if is_tw:
@@ -405,24 +409,25 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         
     return {
         'df': df,
-        'info': info, # 保留原始 info 用於程式邏輯
+        'info': info,
         'name_zh': zh_name,
         'news': news_data,
-        'fund': fundamentals, # 保留中文版 fundamentals 用於表格
+        'fund': fundamentals,
         'pred': pred_price,
         'time': last_time.strftime('%Y-%m-%d %H:%M'),
         'industry': info.get('industry', 'N/A'),
         'analysis': txt_analysis,
         'ai_msg': ai_msg,
         'buy_vol': buy_vol,
-        'sell_vol': sell_vol
+        'sell_vol': sell_vol,
+        'fetch_time': fetch_time  # [新增] 2. 將抓取時間回傳
     }
 
 # --- 4. 側邊欄 ---
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
-# [修正] 設置自動刷新為 1000ms (1秒)，實現倒數計時即時跳動
+# 自動刷新 (1秒一次)
 st_autorefresh(interval=1000, key="auto_refresh")
 
 # 獲取進階時間資訊
@@ -449,13 +454,9 @@ st.sidebar.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# [新增] 數據更新倒數顯示區塊
-st.sidebar.markdown(f"""
-<div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
-    <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
-    <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{int(seconds_to_update)} 秒</div>
-</div>
-""", unsafe_allow_html=True)
+# [修正] 移除原本獨立的倒數計時邏輯
+# [新增] 建立一個空的佔位符，稍後在主程式計算出準確時間後再填入
+timer_placeholder = st.sidebar.empty()
 
 default_code = "2330"
 if "美股" in market_type: default_code = "NVDA"
@@ -480,11 +481,30 @@ st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 
 
 # --- 5. 主程式 ---
 if stock_input:
+    # 載入資料 (如果緩存沒過期，會拿到舊的 fetch_time；過期則會拿到當下新的 fetch_time)
     data = load_data(stock_input, market_type, is_tw, ai_date_str)
     
     if not data:
         st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
         st.stop()
+
+    # [新增] 計算並顯示真實的倒數時間
+    # 邏輯：(現在時間 - 資料上次抓取的時間) = 資料已經存在的時間
+    # 剩餘時間 = 60秒 - 資料已經存在的時間
+    seconds_elapsed = (datetime.now() - data['fetch_time']).total_seconds()
+    seconds_remaining = int(60 - seconds_elapsed)
+    
+    # 防止因網路延遲導致變成負數 (顯示 0 即可)
+    if seconds_remaining < 0:
+        seconds_remaining = 0
+        
+    # 將計算結果填入側邊欄的佔位符
+    timer_placeholder.markdown(f"""
+    <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
+        <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
+        <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{seconds_remaining} 秒</div>
+    </div>
+    """, unsafe_allow_html=True)
         
     df = data['df']
     last = df.iloc[-1]
