@@ -439,6 +439,174 @@ def load_peer_data(main_df, peer_list):
         res_df = pd.DataFrame.from_dict(peer_data, orient='index')
         return res_df.sort_values(by='corr', ascending=False) # 依相關性排序
     return None
+
+# --- [新增] 全球大盤與匯率資料獲取 ---
+@st.cache_data(ttl=60)
+def load_global_market_data():
+    # 定義要追蹤的代碼清單
+    # 格式: {"顯示名稱": "Yahoo代碼"}
+    market_tickers = {
+        "🇹🇼 台灣加權": "^TWII",
+        "🇺🇸 道瓊工業": "^DJI",
+        "🇺🇸 納斯達克": "^IXIC",
+        "🇺🇸 費城半導體": "^SOX",
+        "🇺🇸 標普 500": "^GSPC",
+        "🇭🇰 恆生指數": "^HSI",
+        "🇯🇵 日經 225": "^N225",
+        "🇰🇷 韓國綜合": "^KS11"
+    }
+    
+    # 匯率代碼 (Yahoo Finance 格式通常是 USDXXX=X 代表 1美元兌換多少XXX)
+    # TWD=X (美金/台幣), JPY=X (美金/日幣), HKD=X (美金/港幣)
+    # EURUSD=X (歐元/美金)
+    currency_tickers = {
+        "USD/TWD (美金/台幣)": "TWD=X",
+        "USD/JPY (美金/日幣)": "JPY=X",
+        "USD/HKD (美金/港幣)": "HKD=X",
+        "USD/CNY (美金/人民幣)": "CNY=X",
+        "EUR/USD (歐元/美金)": "EURUSD=X",
+        "BTC/USD (比特幣)": "BTC-USD"
+    }
+
+    all_symbols = list(market_tickers.values()) + list(currency_tickers.values())
+    
+    # 批量下載數據 (取2天以計算漲跌)
+    data = yf.download(all_symbols, period="2d", progress=False)
+    
+    # 整理回傳格式
+    results = {"indices": [], "currencies": []}
+    
+    # 處理大盤指數
+    for name, ticker in market_tickers.items():
+        try:
+            # yfinance 批量下載的結構是 MultiIndex，需特別處理
+            # 如果只有一個ticker，結構不同，這邊做個簡單判斷
+            if len(all_symbols) == 1:
+                hist = data
+            else:
+                hist = data.xs(ticker, level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data
+                
+            if len(hist) >= 1:
+                # 處理最近的交易日數據 (有些市場休市，需抓最後一筆有效值)
+                last_price = hist['Close'].iloc[-1]
+                # 若有前一日數據則計算漲跌，否則設為 0
+                prev_price = hist['Close'].iloc[-2] if len(hist) >= 2 else last_price
+                
+                change = last_price - prev_price
+                pct = (change / prev_price) * 100
+                
+                results["indices"].append({
+                    "name": name,
+                    "price": last_price,
+                    "change": change,
+                    "pct": pct
+                })
+        except Exception as e:
+            print(f"Error processing {name}: {e}")
+            
+    # 處理匯率
+    for name, ticker in currency_tickers.items():
+        try:
+            hist = data.xs(ticker, level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data
+            if len(hist) >= 1:
+                last_price = hist['Close'].iloc[-1]
+                prev_price = hist['Close'].iloc[-2] if len(hist) >= 2 else last_price
+                
+                change = last_price - prev_price
+                pct = (change / prev_price) * 100
+                
+                results["currencies"].append({
+                    "name": name,
+                    "price": last_price,
+                    "change": change,
+                    "pct": pct
+                })
+        except: pass
+        
+    return results
+
+# --- [新增] 顯示大盤總覽頁面 ---
+def show_market_overview():
+    st.markdown("""
+    <div class="hero-container">
+        <h1 style="font-size: 2.5rem; margin: 0; font-weight: 800; color: #f8fafc;">
+            🌍 全球市場戰情總覽
+        </h1>
+        <div style="color: #94a3b8; margin-top: 10px;">
+            即時監控台股、美股、港股重點指數與國際匯率走勢
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 載入數據
+    with st.spinner("正在連線全球交易所數據..."):
+        data = load_global_market_data()
+        
+    if not data:
+        st.error("無法取得市場數據，請稍後再試。")
+        return
+
+    # 1. 顯示大盤指數
+    st.subheader("📊 全球重點指數")
+    
+    # CSS 卡片樣式 (沿用原本的設計風格)
+    cols = st.columns(4)
+    for i, item in enumerate(data["indices"]):
+        c = cols[i % 4]
+        
+        # 顏色邏輯：漲紅跌綠 (台股習慣) 或 漲綠跌紅 (美股習慣)
+        # 這裡沿用您原本程式碼的邏輯：change > 0 為紅色 (台股風格)
+        color = "#ef4444" if item['change'] > 0 else "#22c55e" if item['change'] < 0 else "#94a3b8"
+        arrow = "▲" if item['change'] > 0 else "▼" if item['change'] < 0 else "-"
+        
+        # 換行
+        if i > 0 and i % 4 == 0:
+            st.markdown("<br>", unsafe_allow_html=True)
+            cols = st.columns(4)
+            c = cols[0]
+            
+        with c:
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="card-title">{item['name']}</div>
+                <div class="card-value" style="font-size: 1.5rem;">{item['price']:,.2f}</div>
+                <div class="card-delta" style="color: {color};">
+                    {arrow} {item['change']:,.2f} ({item['pct']:.2f}%)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    st.markdown("---")
+    
+    # 2. 顯示匯率與加密貨幣
+    st.subheader("💱 國際匯率與商品")
+    st.caption("註：USD/TWD 上漲代表美金升值（台幣貶值）。")
+    
+    cur_cols = st.columns(4)
+    for i, item in enumerate(data["currencies"]):
+        c = cur_cols[i % 4]
+        
+        # 匯率通常：綠色代表數值上升 (該貨幣對升值)，紅色代表數值下降
+        # 但為了與台股介面統一，這裡還是：數值變大(升)用紅色，數值變小(跌)用綠色
+        color = "#ef4444" if item['change'] > 0 else "#22c55e" if item['change'] < 0 else "#94a3b8"
+        arrow = "▲" if item['change'] > 0 else "▼" if item['change'] < 0 else "-"
+
+        if i > 0 and i % 4 == 0:
+            st.markdown("<br>", unsafe_allow_html=True)
+            cur_cols = st.columns(4)
+            c = cur_cols[0]
+
+        with c:
+            fmt_str = "{:,.4f}" if item['price'] < 1000 else "{:,.2f}"
+            st.markdown(f"""
+            <div class="metric-card" style="border-color: rgba(251, 191, 36, 0.3);">
+                <div class="card-title" style="color: #fbbf24;">{item['name']}</div>
+                <div class="card-value" style="font-size: 1.5rem;">{fmt_str.format(item['price'])}</div>
+                <div class="card-delta" style="color: {color};">
+                    {arrow} {item['change']:.4f} ({item['pct']:.2f}%)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 # --- 3. 核心資料載入 ---
 # [優化] 將快取時間 (ttl) 改為 45 秒。
 # 這樣做是因為我們主程式每 60 秒會刷新一次，設定 45 秒可以確保
@@ -557,9 +725,21 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         'summary': summary
     }
 
-# --- 4. 側邊欄 ---
+# --- 4. 側邊欄 (修改版) ---
 st.sidebar.title("🎛️ 戰情控制中心")
-market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
+
+# [新增] 功能頁面切換
+page_options = ["📈 個股詳細分析", "🌍 全球大盤總覽"]
+page_selection = st.sidebar.radio("選擇功能模式", page_options)
+
+st.sidebar.markdown("---")
+
+# 只有在「個股詳細分析」模式下才顯示市場選擇與搜尋框
+market_type = "🇹🇼 台股" # 預設值，避免變數未定義
+stock_input = None
+
+if page_selection == "📈 個股詳細分析":
+    market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
@@ -589,48 +769,49 @@ def show_sidebar_timers(market_type, data_fetch_time):
     else:
         st.info("等待數據載入...")
 
-default_code = "2330"
-if "美股" in market_type: default_code = "NVDA"
-elif "港股" in market_type: default_code = "9988"
+# --- 4. 側邊欄 (修改版) ---
+st.sidebar.title("🎛️ 戰情控制中心")
 
-with st.sidebar.expander("🔍 不知道代碼？點此搜尋"):
-    search_query = st.text_input("輸入公司名稱", key="search_input")
-    if search_query:
-        results = search_symbols(search_query)
-        for res in results:
-            if st.button(f"{res.get('symbol')} - {res.get('shortname')}", key=res.get('symbol')):
-                st.session_state.stock_code = res.get('symbol')
-                st.rerun()
-
-if 'stock_code' not in st.session_state:
-    st.session_state.stock_code = default_code
-stock_input = st.sidebar.text_input("輸入代碼", key="stock_code")
-is_tw = "台股" in market_type
+# [新增] 功能頁面切換
+page_options = ["📈 個股詳細分析", "🌍 全球大盤總覽"]
+page_selection = st.sidebar.radio("選擇功能模式", page_options)
 
 st.sidebar.markdown("---")
-st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
 
-# --- 5. 主程式 ---
-# 獲取當前市場是否開盤
-# [修正] 這裡要把 ai_date_str 接出來，下面 load_data 才讀得到
-is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
+# 只有在「個股詳細分析」模式下才顯示市場選擇與搜尋框
+market_type = "🇹🇼 台股" # 預設值，避免變數未定義
+stock_input = None
 
-# 動態設定更新間隔 (毫秒)
-# 開盤 60,000ms (1分) / 收盤 3,600,000ms (7.5min)
-refresh_interval = 60000 if is_open else 450000
+if page_selection == "📈 個股詳細分析":
+    market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
-# 套用動態間隔
-st_autorefresh(interval=refresh_interval, key="data_refresh")
+# --- 5. 主程式 (修改版) ---
 
-if stock_input:
-    # 這裡現在就能正常讀取到 ai_date_str 了
-    data = load_data(stock_input, market_type, is_tw, ai_date_str)
+# 共用的自動刷新邏輯 (可以保留在最外層)
+# 這裡簡單判斷：如果是大盤模式，刷新頻率可以設固定 60秒
+st_autorefresh(interval=60000, key="data_refresh")
+
+if page_selection == "🌍 全球大盤總覽":
+    show_market_overview()
     
-    if not data:
-        st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
-        show_sidebar_timers(market_type, None)
-        st.stop()
+elif page_selection == "📈 個股詳細分析":
+    # 這裡放入您原本 Section 5 的所有邏輯
+    # 注意縮排要正確
+    
+    is_tw = "台股" in market_type
+    is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
+    
+    # 在這裡呼叫側邊欄時間顯示 (因為需要 refresh time)
+    # 由於 load_data 還沒跑，這裡先傳 None，等跑完資料如果需要更新時間可以再思考架構
+    # 但為了簡單，您可以直接在此處顯示靜態時間狀態，或是在下方 load_data 後再次更新
+    show_sidebar_timers(market_type, datetime.now()) 
 
+    if stock_input:
+        data = load_data(stock_input, market_type, is_tw, ai_date_str)
+        
+        if not data:
+            st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
+            st.stop()
     show_sidebar_timers(market_type, data['fetch_time'])
 
     df = data['df']
