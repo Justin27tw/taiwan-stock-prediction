@@ -747,9 +747,36 @@ page_selection = st.sidebar.radio("選擇功能模式", page_options)
 
 st.sidebar.markdown("---")
 
-# 定義時間顯示小工具 (修正版：強制顯示在側邊欄)
+# 定義時間顯示小工具 (修正版：移除 st.sidebar 前綴，避免 Fragment 報錯)
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
+    is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
+    status_color = "#22c55e" if is_open else "#ef4444"
+    status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
+
+    # 注意：這裡改回 st.markdown (不加 sidebar)
+    st.markdown(f"""
+    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 5px solid {status_color}; margin-bottom: 20px;">
+        <div style="font-weight: bold; font-size: 1.1rem; color: #f8fafc; margin-bottom: 5px;">{status_text}</div>
+        <div style="font-size: 0.9rem; color: #cbd5e1;">⏳ {time_msg}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if data_fetch_time:
+        seconds_elapsed = (datetime.now() - data_fetch_time).total_seconds()
+        seconds_remaining = int(60 - seconds_elapsed)
+        if seconds_remaining < 0: seconds_remaining = 0
+        
+        # 注意：這裡改回 st.markdown (不加 sidebar)
+        st.markdown(f"""
+        <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
+            <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
+            <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{seconds_remaining} 秒</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # 注意：這裡改回 st.info (不加 sidebar)
+        st.info("等待數據載入...")
     is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
     status_color = "#22c55e" if is_open else "#ef4444"
     status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
@@ -816,12 +843,16 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
-# --- 5. 主程式 (修正版：移除重複的時間顯示呼叫) ---
+# --- 5. 主程式 (最終修正版) ---
 
 # 自動刷新 (設定為 60 秒)
 st_autorefresh(interval=60000, key="data_refresh")
 
 if page_selection == "🌍 全球大盤總覽":
+    # 在大盤模式下，將時間顯示放在側邊欄
+    with st.sidebar:
+        show_sidebar_timers("🇹🇼 台股", datetime.now())
+        
     show_market_overview()
     
 elif page_selection == "📈 個股詳細分析":
@@ -829,18 +860,25 @@ elif page_selection == "📈 個股詳細分析":
     is_tw = "台股" in market_type
     is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
     
-    # [修正] 這裡原本有的 show_sidebar_timers 呼叫已刪除，因為側邊欄已經有了
-
+    # 1. 先嘗試載入資料 (如果有的話)
+    data = None
     if stock_input:
-        # 嘗試載入資料
         data = load_data(stock_input, market_type, is_tw, ai_date_str)
         
         if not data:
             st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
             st.stop()
             
-        # [修正] 這裡原本有的第二次 show_sidebar_timers 呼叫也已刪除
+    # 2. 決定時間顯示器的基準時間
+    # 如果有抓到資料，就用資料的 fetch_time；如果還沒輸入代碼，就用現在時間
+    timer_time = data['fetch_time'] if data else datetime.now()
 
+    # 3. 呼叫側邊欄時間顯示 (只呼叫這一次，且放在 with st.sidebar 內)
+    with st.sidebar:
+        show_sidebar_timers(market_type, timer_time)
+
+    # 4. 顯示主畫面內容
+    if data:
         df = data['df']
         last = df.iloc[-1]
         prev = df.iloc[-2]
