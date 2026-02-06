@@ -382,6 +382,63 @@ def get_peers_list(stock_code, info, market_type):
     final_peers = [p for p in peers if p.replace(".TW", "").replace(".TWO", "") not in clean_input.replace(".TW", "").replace(".TWO", "")]
     
     return list(final_peers)[:5] # 最多只取前 5 檔，避免跑太久
+# --- [遺失的函數] 抓取同業資料與計算相關性 ---
+@st.cache_data(ttl=300) # 設定 5 分鐘快取
+def load_peer_data(main_df, peer_list):
+    if not peer_list: return None
+    
+    peer_data = {}
+    
+    # 統一時間範圍 (取主股票的最近 60 天數據來算相關性)
+    start_date = main_df.index[-60] if len(main_df) > 60 else main_df.index[0]
+    
+    # 取出主股票的收盤價
+    main_closes = main_df.loc[start_date:]['Close']
+    
+    for p_code in peer_list:
+        try:
+            ticker = yf.Ticker(p_code)
+            # 只抓最近 3 個月數據以加快速度
+            hist = ticker.history(period="3mo")
+            
+            if not hist.empty:
+                peer_closes = hist['Close']
+                
+                # 計算漲跌幅
+                last_price = peer_closes.iloc[-1]
+                prev_price = peer_closes.iloc[-2]
+                pct_change = (last_price - prev_price) / prev_price * 100
+                
+                # 計算相關係數 (Correlation)
+                # 需先將兩者索引對齊 (inner join)，去除空值
+                aligned_df = pd.DataFrame({'Main': main_closes, 'Peer': peer_closes}).dropna()
+                corr = aligned_df['Main'].corr(aligned_df['Peer'])
+                
+                # 取得名稱 (若為台股嘗試用 twstock 轉中文)
+                try:
+                    name = ticker.info.get('shortName', p_code)
+                    if "TW" in p_code: 
+                        base_code = p_code.split('.')[0]
+                        if base_code in twstock.codes:
+                            name = twstock.codes[base_code].name
+                except:
+                    name = p_code
+
+                peer_data[p_code] = {
+                    "name": name,
+                    "price": last_price,
+                    "pct": pct_change,
+                    "corr": corr
+                }
+        except Exception as e:
+            print(f"Peer error {p_code}: {e}")
+            continue
+            
+    # 將結果轉為 DataFrame 方便顯示
+    if peer_data:
+        res_df = pd.DataFrame.from_dict(peer_data, orient='index')
+        return res_df.sort_values(by='corr', ascending=False) # 依相關性排序
+    return None
 # --- 3. 核心資料載入 ---
 # [優化] 將快取時間 (ttl) 改為 45 秒。
 # 這樣做是因為我們主程式每 60 秒會刷新一次，設定 45 秒可以確保
