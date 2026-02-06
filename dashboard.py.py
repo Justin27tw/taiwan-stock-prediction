@@ -382,6 +382,15 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
     try: info = ticker.info
     except: pass
     
+    # [修正] 手動建構基本面字典，確保即使抓不到資料也有欄位顯示
+    fundamentals = {
+        '本益比 (P/E)': info.get('trailingPE', 'N/A'),
+        '預估本益比 (Fwd P/E)': info.get('forwardPE', 'N/A'),
+        '股價淨值比 (P/B)': info.get('priceToBook', 'N/A'),
+        '股東權益報酬率 (ROE)': info.get('returnOnEquity', 'N/A'),
+        '分析師目標價': info.get('targetMeanPrice', 'N/A')
+    }
+
     stock_name = info.get('longName', info.get('shortName', yf_code_used))
     if is_tw and stock_code in twstock.codes:
         stock_name = twstock.codes[stock_code].name
@@ -428,7 +437,7 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         'info': info,
         'name_zh': zh_name,
         'news': news_data,
-        'fund': info,
+        'fund': fundamentals, # [修正] 這裡改傳回整理好的 fundamentals 字典
         'pred': pred_price,
         'time': last_time.strftime('%Y-%m-%d %H:%M'),
         'industry': info.get('industry', 'N/A'),
@@ -618,8 +627,15 @@ if stock_input:
 
     with tab3:
         st.subheader("📋 關鍵財務數據")
-        f_data = {k: str(v) for k, v in data['fund'].items() if k in ['trailingPE', 'forwardPE', 'priceToBook', 'returnOnEquity', 'targetMeanPrice']}
-        st.dataframe(pd.DataFrame([f_data]).astype(str), hide_index=True, use_container_width=True)
+        
+        # [修正] 直接將整理好的字典轉為 DataFrame 顯示
+        # 使用 list(data['fund'].items()) 轉成兩欄的表格 (指標名稱 | 數值)
+        fund_df = pd.DataFrame(list(data['fund'].items()), columns=['指標', '數值'])
+        
+        # 針對數值做簡單格式化 (如果是數字就轉字串，避免顯示問題)
+        fund_df['數值'] = fund_df['數值'].astype(str)
+        
+        st.dataframe(fund_df, hide_index=True, use_container_width=True)
 
     st.markdown("---")
     st.markdown("""<div class="disclaimer-box">⚠️ 免責聲明：所有數據僅供參考，投資盈虧自負。</div>""", unsafe_allow_html=True)
