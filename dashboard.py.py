@@ -440,7 +440,8 @@ market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸
 
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
-    is_open, time_msg, _ = get_market_timing_info(market_type)
+    # To this:
+    is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
     status_color = "#22c55e" if is_open else "#ef4444"
     status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
 
