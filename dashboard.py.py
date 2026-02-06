@@ -489,7 +489,8 @@ st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 
 
 # --- 5. 主程式 ---
 # 獲取當前市場是否開盤
-is_open, _, _ = get_market_timing_info(market_type)
+# [修正] 這裡要把 ai_date_str 接出來，下面 load_data 才讀得到
+is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
 
 # 動態設定更新間隔 (毫秒)
 # 開盤 60,000ms (1分) / 收盤 3,600,000ms (7.5min)
@@ -499,6 +500,7 @@ refresh_interval = 60000 if is_open else 450000
 st_autorefresh(interval=refresh_interval, key="data_refresh")
 
 if stock_input:
+    # 這裡現在就能正常讀取到 ai_date_str 了
     data = load_data(stock_input, market_type, is_tw, ai_date_str)
     
     if not data:
