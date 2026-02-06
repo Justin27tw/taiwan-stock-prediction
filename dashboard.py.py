@@ -487,9 +487,15 @@ st.sidebar.markdown("---")
 st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
 
 # --- 5. 主程式 ---
-st_autorefresh(interval=60000, key="data_refresh")
+# 獲取當前市場是否開盤
+is_open, _, _ = get_market_timing_info(market_type)
 
-_, _, ai_date_str = get_market_timing_info(market_type)
+# 動態設定更新間隔 (毫秒)
+# 開盤 60,000ms (1分) / 收盤 3,600,000ms (7.5min)
+refresh_interval = 60000 if is_open else 450000
+
+# 套用動態間隔
+st_autorefresh(interval=refresh_interval, key="data_refresh")
 
 if stock_input:
     data = load_data(stock_input, market_type, is_tw, ai_date_str)
