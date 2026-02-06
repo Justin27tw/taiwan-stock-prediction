@@ -440,11 +440,9 @@ def load_peer_data(main_df, peer_list):
         return res_df.sort_values(by='corr', ascending=False) # 依相關性排序
     return None
 
-# --- [新增] 全球大盤與匯率資料獲取 ---
+# --- [修正版] 全球大盤與匯率資料獲取 ---
 @st.cache_data(ttl=60)
 def load_global_market_data():
-    # 定義要追蹤的代碼清單
-    # 格式: {"顯示名稱": "Yahoo代碼"}
     market_tickers = {
         "🇹🇼 台灣加權": "^TWII",
         "🇺🇸 道瓊工業": "^DJI",
@@ -456,9 +454,6 @@ def load_global_market_data():
         "🇰🇷 韓國綜合": "^KS11"
     }
     
-    # 匯率代碼 (Yahoo Finance 格式通常是 USDXXX=X 代表 1美元兌換多少XXX)
-    # TWD=X (美金/台幣), JPY=X (美金/日幣), HKD=X (美金/港幣)
-    # EURUSD=X (歐元/美金)
     currency_tickers = {
         "USD/TWD (美金/台幣)": "TWD=X",
         "USD/JPY (美金/日幣)": "JPY=X",
@@ -470,30 +465,39 @@ def load_global_market_data():
 
     all_symbols = list(market_tickers.values()) + list(currency_tickers.values())
     
-    # 批量下載數據 (取2天以計算漲跌)
-    data = yf.download(all_symbols, period="2d", progress=False)
+    # 改為抓取 5 天，確保即使遇到週末或休市也能回溯到有資料的那一天
+    try:
+        data = yf.download(all_symbols, period="5d", progress=False)
+    except Exception as e:
+        print(f"Download Error: {e}")
+        return None
     
-    # 整理回傳格式
     results = {"indices": [], "currencies": []}
     
     # 處理大盤指數
     for name, ticker in market_tickers.items():
         try:
-            # yfinance 批量下載的結構是 MultiIndex，需特別處理
-            # 如果只有一個ticker，結構不同，這邊做個簡單判斷
-            if len(all_symbols) == 1:
-                hist = data
+            # 處理 MultiIndex 結構
+            if len(all_symbols) > 1:
+                # 嘗試取出該 ticker 的所有數據
+                try:
+                    # yfinance 新版可能結構不同，這裡做相容性處理
+                    hist = data.xs(ticker, level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data
+                except KeyError:
+                    continue
             else:
-                hist = data.xs(ticker, level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data
-                
-            if len(hist) >= 1:
-                # 處理最近的交易日數據 (有些市場休市，需抓最後一筆有效值)
-                last_price = hist['Close'].iloc[-1]
-                # 若有前一日數據則計算漲跌，否則設為 0
-                prev_price = hist['Close'].iloc[-2] if len(hist) >= 2 else last_price
+                hist = data
+
+            # 關鍵修正：只取 'Close' 並移除空值 (dropna)，解決時區對齊造成的 nan 問題
+            closes = hist['Close'].dropna()
+
+            if len(closes) >= 1:
+                last_price = closes.iloc[-1]
+                # 找前一天的收盤價來算漲跌 (若資料不足 2 筆則用最後一筆代替)
+                prev_price = closes.iloc[-2] if len(closes) >= 2 else last_price
                 
                 change = last_price - prev_price
-                pct = (change / prev_price) * 100
+                pct = (change / prev_price) * 100 if prev_price != 0 else 0
                 
                 results["indices"].append({
                     "name": name,
@@ -504,16 +508,25 @@ def load_global_market_data():
         except Exception as e:
             print(f"Error processing {name}: {e}")
             
-    # 處理匯率
+    # 處理匯率 (邏輯同上)
     for name, ticker in currency_tickers.items():
         try:
-            hist = data.xs(ticker, level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data
-            if len(hist) >= 1:
-                last_price = hist['Close'].iloc[-1]
-                prev_price = hist['Close'].iloc[-2] if len(hist) >= 2 else last_price
+            if len(all_symbols) > 1:
+                try:
+                    hist = data.xs(ticker, level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data
+                except KeyError:
+                    continue
+            else:
+                hist = data
+            
+            closes = hist['Close'].dropna()
+            
+            if len(closes) >= 1:
+                last_price = closes.iloc[-1]
+                prev_price = closes.iloc[-2] if len(closes) >= 2 else last_price
                 
                 change = last_price - prev_price
-                pct = (change / prev_price) * 100
+                pct = (change / prev_price) * 100 if prev_price != 0 else 0
                 
                 results["currencies"].append({
                     "name": name,
@@ -725,25 +738,18 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         'summary': summary
     }
 
-# --- 4. 側邊欄 (修改版) ---
+# --- 4. 側邊欄 (完整修正版) ---
 st.sidebar.title("🎛️ 戰情控制中心")
 
-# [新增] 功能頁面切換
+# 功能頁面切換
 page_options = ["📈 個股詳細分析", "🌍 全球大盤總覽"]
 page_selection = st.sidebar.radio("選擇功能模式", page_options)
 
 st.sidebar.markdown("---")
 
-# 只有在「個股詳細分析」模式下才顯示市場選擇與搜尋框
-market_type = "🇹🇼 台股" # 預設值，避免變數未定義
-stock_input = None
-
-if page_selection == "📈 個股詳細分析":
-    market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
-
+# 定義時間顯示小工具 (放在這裡定義，方便下方呼叫)
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
-    # To this:
     is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
     status_color = "#22c55e" if is_open else "#ef4444"
     status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
@@ -768,6 +774,47 @@ def show_sidebar_timers(market_type, data_fetch_time):
         """, unsafe_allow_html=True)
     else:
         st.info("等待數據載入...")
+
+# 初始化變數
+market_type = "🇹🇼 台股"
+stock_input = None
+
+# --- 側邊欄邏輯 ---
+if page_selection == "📈 個股詳細分析":
+    market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
+    
+    # 呼叫時間顯示 (先傳入 None 因為還沒開始抓資料)
+    show_sidebar_timers(market_type, datetime.now())
+    
+    # 設定預設代碼
+    default_code = "2330"
+    if "美股" in market_type: default_code = "NVDA"
+    elif "港股" in market_type: default_code = "9988"
+
+    # [遺失的部分補回] 搜尋框
+    with st.sidebar.expander("🔍 不知道代碼？點此搜尋"):
+        search_query = st.text_input("輸入公司名稱", key="search_input")
+        if search_query:
+            results = search_symbols(search_query)
+            for res in results:
+                btn_label = f"{res.get('symbol')} - {res.get('shortname')}"
+                if st.button(btn_label, key=res.get('symbol')):
+                    st.session_state.stock_code = res.get('symbol')
+                    st.rerun()
+
+    if 'stock_code' not in st.session_state:
+        st.session_state.stock_code = default_code
+        
+    # [遺失的部分補回] 股票代碼輸入框
+    stock_input = st.sidebar.text_input("輸入代碼", key="stock_code")
+
+else:
+    # 大盤模式下，顯示簡單資訊
+    st.sidebar.info("目前顯示全球主要指數與匯率行情。")
+    show_sidebar_timers("🇹🇼 台股", datetime.now())
+
+st.sidebar.markdown("---")
+st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
 # --- 5. 主程式 (修正縮排版) ---
 
 # 自動刷新 (設定為 60 秒)
