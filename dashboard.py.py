@@ -317,7 +317,10 @@ def generate_layman_analysis(df, fund, pred_price, date_str):
     return analysis, ai_msg
 
 # --- 3. 核心資料載入 ---
-@st.cache_data(ttl=60)
+# [優化] 將快取時間 (ttl) 改為 45 秒。
+# 這樣做是因為我們主程式每 60 秒會刷新一次，設定 45 秒可以確保
+# 當網頁在第 60 秒刷新時，快取肯定已經過期，強迫系統去抓取最新資料。
+@st.cache_data(ttl=45)
 def load_data(stock_code, market_type, is_tw, ai_date_str):
     fetch_time = datetime.now()
 
@@ -355,17 +358,13 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
     try: info = ticker.info
     except: pass
     
-    # [修改] 抓取公司/指數簡介並進行自動翻譯
+    # 抓取公司/指數簡介並進行自動翻譯
     raw_summary = info.get('longBusinessSummary', info.get('description', '暫無相關簡介資訊。'))
     summary = raw_summary
-    
-    # 嘗試翻譯
     try:
         if raw_summary and raw_summary != '暫無相關簡介資訊。':
-            # 使用 Google Translator 翻譯成繁體中文
             summary = GoogleTranslator(source='auto', target='zh-TW').translate(raw_summary)
     except Exception as e:
-        # 如果翻譯失敗，就使用原文，不報錯
         print(f"Summary Translation Error: {e}")
         pass
 
@@ -432,17 +431,15 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         'buy_vol': buy_vol,
         'sell_vol': sell_vol,
         'fetch_time': fetch_time,
-        'summary': summary # 回傳已翻譯的簡介
+        'summary': summary
     }
 
 # --- 4. 側邊欄 ---
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
-# [使用 st.fragment] 獨立刷新側邊欄的倒數計時器
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
-    # 1. 市場開收盤倒數
     is_open, time_msg, _ = get_market_timing_info(market_type)
     status_color = "#22c55e" if is_open else "#ef4444"
     status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
@@ -454,7 +451,6 @@ def show_sidebar_timers(market_type, data_fetch_time):
     </div>
     """, unsafe_allow_html=True)
     
-    # 2. 數據更新倒數
     if data_fetch_time:
         seconds_elapsed = (datetime.now() - data_fetch_time).total_seconds()
         seconds_remaining = int(60 - seconds_elapsed)
@@ -491,10 +487,8 @@ st.sidebar.markdown("---")
 st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
 
 # --- 5. 主程式 ---
-# 全頁刷新頻率為 60秒 (為了更新數據)
 st_autorefresh(interval=60000, key="data_refresh")
 
-# 獲取日期字串供 AI 報告使用
 _, _, ai_date_str = get_market_timing_info(market_type)
 
 if stock_input:
@@ -505,7 +499,6 @@ if stock_input:
         show_sidebar_timers(market_type, None)
         st.stop()
 
-    # 呼叫側邊欄的 fragment 函數
     show_sidebar_timers(market_type, data['fetch_time'])
 
     df = data['df']
@@ -534,7 +527,6 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
     
-    # 顯示自動翻譯後的公司簡介
     with st.expander("🏢 查看公司/指數簡介 (Business Summary)"):
         st.markdown(f"<div style='line-height: 1.6; color: #e2e8f0;'>{data['summary']}</div>", unsafe_allow_html=True)
 
@@ -598,11 +590,36 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
-    def card(col, title, value, delta=None, prefix=""):
-        d_html = f'<div class="card-delta" style="color: {"#ef4444" if "▲" in delta else "#22c55e"};">{delta}</div>' if delta else ""
-        col.markdown(f"""<div class="metric-card"><div class="card-title">{title}</div><div class="card-value">{prefix}{value}</div>{d_html}</div>""", unsafe_allow_html=True)
+    # 1. 定義 Helper 函數 (為了下方使用)
+    def card(col, title, value, delta=None, prefix="", color=None):
+        d_html = ""
+        if delta:
+            d_color = "#ef4444" if "▲" in delta else "#22c55e"
+            d_html = f'<div class="card-delta" style="color: {d_color};">{delta}</div>'
+        
+        # 自訂值顏色 (若無則預設白色)
+        val_color = color if color else "#f8fafc"
+        
+        col.markdown(f"""
+        <div class="metric-card">
+            <div class="card-title">{title}</div>
+            <div class="card-value" style="color: {val_color}">{prefix}{value}</div>
+            {d_html}
+        </div>""", unsafe_allow_html=True)
 
+    # [新增] 2. 顯示 當日最高 / 當日最低 / 開盤價
+    # 這段代碼放在 AI 報告下方，一般數據卡片上方
+    st.subheader("📊 本日行情摘要")
+    c_high, c_low, c_open = st.columns(3)
+    
+    # 取得最新一筆資料
+    card(c_high, "最高價 (High)", f"{last['High']:.2f}", color="#ef4444")  # 紅色代表高點
+    card(c_low, "最低價 (Low)", f"{last['Low']:.2f}", color="#22c55e")    # 綠色代表低點
+    card(c_open, "開盤價 (Open)", f"{last['Open']:.2f}")
+
+    st.markdown("---") # 分隔線
+
+    c1, c2, c3, c4 = st.columns(4)
     pred_diff = data['pred'] - last['Close']
     card(c1, f"AI 預測{ai_date_str}價格", f"{data['pred']:.2f}", f"{'▲' if pred_diff>0 else '▼'} {abs((pred_diff/last['Close'])*100):.2f}%")
     
