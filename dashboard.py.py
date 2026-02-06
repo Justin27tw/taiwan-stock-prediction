@@ -128,14 +128,12 @@ local_css()
 
 # --- 2. 輔助函數 ---
 
-# 新增：進階市場時間倒數與日期判斷邏輯
 def get_market_timing_info(market_type):
     tz_map = { "台股": 'Asia/Taipei', "港股": 'Asia/Hong_Kong', "美股": 'America/New_York' }
     tz_name = next((v for k, v in tz_map.items() if k in market_type), 'Asia/Taipei')
     tz = pytz.timezone(tz_name)
     now = datetime.now(tz)
     
-    # 定義開收盤時間
     if "美股" in market_type:
         open_time = time(9, 30)
         close_time = time(16, 0)
@@ -146,68 +144,53 @@ def get_market_timing_info(market_type):
         open_time = time(9, 30)
         close_time = time(16, 0)
 
-    # 判斷當前狀態與倒數
     current_time = now.time()
-    weekday = now.weekday() # 0=Mon, 6=Sun
+    weekday = now.weekday() 
     
-    is_trading_day = weekday <= 4 # 週一到週五
+    is_trading_day = weekday <= 4
     is_open = False
     countdown_msg = ""
     target_dt = None
     
-    # 邏輯：判斷目前狀態
     if is_trading_day:
         if current_time < open_time:
-            # 盤前 -> 倒數開盤
             target_dt = datetime.combine(now.date(), open_time).replace(tzinfo=tz)
             is_open = False
             state_label = "距離開盤"
         elif open_time <= current_time <= close_time:
-            # 盤中 -> 倒數收盤
             target_dt = datetime.combine(now.date(), close_time).replace(tzinfo=tz)
             is_open = True
             state_label = "距離收盤"
         else:
-            # 盤後 -> 倒數明日開盤 (需考慮週五盤後)
             is_open = False
             state_label = "距離開盤"
             days_add = 1
-            if weekday == 4: # 週五盤後 -> 下週一
-                days_add = 3
+            if weekday == 4: days_add = 3
             target_dt = datetime.combine(now.date() + timedelta(days=days_add), open_time).replace(tzinfo=tz)
     else:
-        # 週末 -> 倒數週一開盤
         is_open = False
         state_label = "距離開盤"
-        days_add = (7 - weekday) # Sat(5)->+2, Sun(6)->+1
+        days_add = (7 - weekday)
         target_dt = datetime.combine(now.date() + timedelta(days=days_add), open_time).replace(tzinfo=tz)
 
-    # 計算倒數
     diff = target_dt - now
     total_seconds = int(diff.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     
     if days := diff.days:
-        time_str = f"{days}天 {hours}時 {minutes}分"
+        time_str = f"{days}天 {hours:02d}:{minutes:02d}:{seconds:02d}"
     else:
-        time_str = f"{hours}時 {minutes}分 {seconds}秒"
+        time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         
     countdown_msg = f"{state_label}: {time_str}"
     
-    # AI 報告用的日期文字
-    # 規則：週五(4)、週六(5) -> 顯示 "下週一"
-    # 週日(6)、週一~週四(0-3) -> 顯示 "明日" (週日寫明日是因為使用者認為週日看的是週一的預測)
-    if weekday == 4 or weekday == 5:
-        ai_date_str = "下週一"
-    elif weekday == 6:
-        ai_date_str = "明日 (週一)"
-    else:
-        ai_date_str = "明日"
+    if weekday == 4 or weekday == 5: ai_date_str = "下週一"
+    elif weekday == 6: ai_date_str = "明日 (週一)"
+    else: ai_date_str = "明日"
         
     return is_open, countdown_msg, ai_date_str
 
-# 新增：搜尋代碼 API 函數
 def search_symbols(query):
     url = "https://query2.finance.yahoo.com/v1/finance/search"
     params = {"q": query, "quotesCount": 5, "newsCount": 0}
@@ -221,7 +204,6 @@ def search_symbols(query):
         print(f"Search Error: {e}")
     return []
 
-# 新增：獲取市場指數
 def get_market_indices(market_type):
     index_map = {
         "台股": {"加權指數 (TAIEX)": "^TWII"},
@@ -248,23 +230,15 @@ def get_market_indices(market_type):
             except: pass
     return results
 
-# 新增：估算買賣盤成交量 (使用當日分鐘級資料近似)
 def get_buy_sell_volume_estimate(ticker):
     try:
-        # 抓取今天 5分鐘頻率資料
         df_intra = ticker.history(period="1d", interval="5m")
-        if df_intra.empty:
-            return 0, 0
-        
-        # 簡易估算：紅K(收>開)計入買盤，黑K(收<開)計入賣盤
+        if df_intra.empty: return 0, 0
         buy_vol = df_intra[df_intra['Close'] >= df_intra['Open']]['Volume'].sum()
         sell_vol = df_intra[df_intra['Close'] < df_intra['Open']]['Volume'].sum()
-        
         return buy_vol, sell_vol
-    except:
-        return 0, 0
+    except: return 0, 0
 
-# --- 中文翻譯與新聞抓取 ---
 def get_chinese_name_and_news(raw_name, raw_code):
     zh_name = raw_name
     translated = False
@@ -295,7 +269,6 @@ def get_chinese_name_and_news(raw_name, raw_code):
         zh_name = raw_name
     return zh_name, news_list
 
-# --- 白話文分析生成器 (修改：加入動態日期) ---
 def generate_layman_analysis(df, fund, pred_price, date_str):
     last_close = df['Close'].iloc[-1]
     ma5 = df['MA5'].iloc[-1]
@@ -335,7 +308,6 @@ def generate_layman_analysis(df, fund, pred_price, date_str):
         
     reason_str = "、".join(reasons)
     
-    # 動態使用傳入的日期字串 (date_str)
     ai_msg = f"""
     🤖 **AI 模型預測**：根據大數據演算，預測<span class='highlight'>{date_str}</span>股價可能來到 <span class='highlight'>{pred_price:.2f}</span>，潛在{direction}幅度約 <span class='highlight'>{abs(pred_pct):.2f}%</span>。<br>
     <div style='margin-top: 10px; font-size: 0.95rem; color: #cbd5e1;'>
@@ -375,14 +347,13 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
 
     if history.empty: return None
 
-    # 獲取即時買賣盤估算
     buy_vol, sell_vol = get_buy_sell_volume_estimate(ticker)
 
     info = {}
     try: info = ticker.info
     except: pass
     
-    # [修正] 手動建構基本面字典，確保即使抓不到資料也有欄位顯示
+    # 建立基本面字典 (用於表格顯示，鍵值為中文)
     fundamentals = {
         '本益比 (P/E)': info.get('trailingPE', 'N/A'),
         '預估本益比 (Fwd P/E)': info.get('forwardPE', 'N/A'),
@@ -434,10 +405,10 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         
     return {
         'df': df,
-        'info': info,
+        'info': info, # 保留原始 info 用於程式邏輯
         'name_zh': zh_name,
         'news': news_data,
-        'fund': fundamentals, # [修正] 這裡改傳回整理好的 fundamentals 字典
+        'fund': fundamentals, # 保留中文版 fundamentals 用於表格
         'pred': pred_price,
         'time': last_time.strftime('%Y-%m-%d %H:%M'),
         'industry': info.get('industry', 'N/A'),
@@ -451,19 +422,38 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
+# [修正] 設置自動刷新為 1000ms (1秒)，實現倒數計時即時跳動
+st_autorefresh(interval=1000, key="auto_refresh")
+
 # 獲取進階時間資訊
 is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
 
-# 自動刷新
-st_autorefresh(interval=60000, key="auto_refresh")
+# [新增] 數據更新倒數計時邏輯
+if 'next_update_time' not in st.session_state:
+    st.session_state.next_update_time = datetime.now() + timedelta(seconds=60)
+
+seconds_to_update = (st.session_state.next_update_time - datetime.now()).total_seconds()
+if seconds_to_update <= 0:
+    # 時間到，重置計時器 (此時 load_data 的 ttl 也過期，會自動抓新資料)
+    st.session_state.next_update_time = datetime.now() + timedelta(seconds=60)
+    seconds_to_update = 60
 
 # 顯示倒數計時與狀態
 status_color = "#22c55e" if is_open else "#ef4444"
 status_text = "🟢 交易進行中" if is_open else "🔴 已收盤"
+
 st.sidebar.markdown(f"""
 <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border-left: 5px solid {status_color}; margin-bottom: 20px;">
     <div style="font-weight: bold; font-size: 1.1rem; color: #f8fafc; margin-bottom: 5px;">{status_text}</div>
     <div style="font-size: 0.9rem; color: #cbd5e1;">⏳ {time_msg}</div>
+</div>
+""", unsafe_allow_html=True)
+
+# [新增] 數據更新倒數顯示區塊
+st.sidebar.markdown(f"""
+<div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.3); margin-bottom: 20px; text-align: center;">
+    <div style="font-size: 0.8rem; color: #93c5fd;">數據下一次更新於</div>
+    <div style="font-size: 1.2rem; font-weight: bold; color: #3b82f6;">{int(seconds_to_update)} 秒</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -490,7 +480,6 @@ st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 
 
 # --- 5. 主程式 ---
 if stock_input:
-    # 傳入 ai_date_str 讓 AI 報告日期連動
     data = load_data(stock_input, market_type, is_tw, ai_date_str)
     
     if not data:
@@ -505,7 +494,6 @@ if stock_input:
     color = "#ef4444" if change > 0 else "#22c55e" if change < 0 else "#94a3b8"
     arrow = "▲" if change > 0 else "▼" if change < 0 else "-"
     
-    # 1. 股價 Hero Container
     st.markdown(f"""
     <div class="hero-container" style="border-top: 5px solid {color};">
         <div style="font-size: 1.2rem; color: #94a3b8; margin-bottom: 5px;">{market_type} | {data['industry']}</div>
@@ -524,8 +512,6 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
-    # 2. 新增：買賣盤力道顯示 (在 Hero 下方)
-    # 計算百分比
     total_est_vol = data['buy_vol'] + data['sell_vol']
     if total_est_vol > 0:
         buy_pct = (data['buy_vol'] / total_est_vol) * 100
@@ -553,7 +539,6 @@ if stock_input:
     st.caption("註：買賣盤數據為使用當日分時K線估算之近似值，僅供參考力道方向。")
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 3. 大盤指數區塊 (移動至此)
     market_indices = get_market_indices(market_type)
     if market_indices:
         st.markdown(f"###### 📊 {market_type} 重點指數")
@@ -574,7 +559,6 @@ if stock_input:
                 """, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 4. AI 投資顧問報告
     st.markdown(f"""
     <div class="ai-report-box">
         <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
@@ -588,7 +572,6 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
-    # 數據卡片與圖表區 (維持原樣)
     c1, c2, c3, c4 = st.columns(4)
     def card(col, title, value, delta=None, prefix=""):
         d_html = f'<div class="card-delta" style="color: {"#ef4444" if "▲" in delta else "#22c55e"};">{delta}</div>' if delta else ""
@@ -597,11 +580,12 @@ if stock_input:
     pred_diff = data['pred'] - last['Close']
     card(c1, f"AI 預測{ai_date_str}價格", f"{data['pred']:.2f}", f"{'▲' if pred_diff>0 else '▼'} {abs((pred_diff/last['Close'])*100):.2f}%")
     
-    pe = data['fund'].get('trailingPE', 'N/A')
+    # [修正] 這裡改回使用 data['info'] (原始英文鍵值) 讀取數據，確保卡片能顯示
+    pe = data['info'].get('trailingPE', 'N/A')
     pe_str = f"{pe:.1f}" if isinstance(pe, (int, float)) else "N/A"
     card(c2, "本益比 (P/E)", pe_str)
     
-    dy = data['fund'].get('dividendYield', 0)
+    dy = data['info'].get('dividendYield', 0)
     dy_str = f"{dy*100:.2f}%" if isinstance(dy, (int, float)) else "N/A"
     card(c3, "殖利率 (Yield)", dy_str)
     
@@ -628,13 +612,9 @@ if stock_input:
     with tab3:
         st.subheader("📋 關鍵財務數據")
         
-        # [修正] 直接將整理好的字典轉為 DataFrame 顯示
-        # 使用 list(data['fund'].items()) 轉成兩欄的表格 (指標名稱 | 數值)
+        # 這裡繼續使用 data['fund'] (中文鍵值)，因為表格需要顯示中文
         fund_df = pd.DataFrame(list(data['fund'].items()), columns=['指標', '數值'])
-        
-        # 針對數值做簡單格式化 (如果是數字就轉字串，避免顯示問題)
         fund_df['數值'] = fund_df['數值'].astype(str)
-        
         st.dataframe(fund_df, hide_index=True, use_container_width=True)
 
     st.markdown("---")
