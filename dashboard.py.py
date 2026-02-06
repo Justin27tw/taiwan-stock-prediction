@@ -501,22 +501,7 @@ st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究與技
 
 # --- 5. 主程式 ---
 if stock_input:
-    # 1. 顯示大盤指數
-    market_indices = get_market_indices(market_type)
-    if market_indices:
-        # 使用 expander 或直接顯示，這裡選擇直接顯示在頂部
-        cols = st.columns(len(market_indices))
-        for i, idx in enumerate(market_indices):
-            color = "#ef4444" if idx['change'] > 0 else "#22c55e" if idx['change'] < 0 else "#94a3b8"
-            arrow = "▲" if idx['change'] > 0 else "▼" if idx['change'] < 0 else "-"
-            with cols[i]:
-                st.markdown(f"""
-                <div style="background-color: #1e293b; border: 1px solid rgba(255,255,255,0.1); padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 10px;">
-                    <div style="font-size: 0.8rem; color: #cbd5e1;">{idx['name']}</div>
-                    <div style="font-size: 1.1rem; font-weight: bold; color: #fff;">{idx['price']:,.2f}</div>
-                    <div style="font-size: 0.8rem; color: {color};">{arrow} {abs(idx['change']):.2f} ({abs(idx['pct']):.2f}%)</div>
-                </div>
-                """, unsafe_allow_html=True)
+    # 1. 先載入資料 (原本的順序)
     data = load_data(stock_input, market_type, is_tw)
     
     if not data:
@@ -531,6 +516,7 @@ if stock_input:
     color = "#ef4444" if change > 0 else "#22c55e" if change < 0 else "#94a3b8"
     arrow = "▲" if change > 0 else "▼" if change < 0 else "-"
     
+    # 2. 顯示 Hero Container (股價大標題) - 保持不變
     st.markdown(f"""
     <div class="hero-container" style="border-top: 5px solid {color};">
         <div style="font-size: 1.2rem; color: #94a3b8; margin-bottom: 5px;">{market_type} | {data['industry']}</div>
@@ -549,6 +535,29 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
 
+    # ==========================================
+    # 📍 [移動到這裡] 3. 顯示大盤指數區塊
+    # ==========================================
+    market_indices = get_market_indices(market_type)
+    if market_indices:
+        st.markdown(f"###### 📊 {market_type} 重點指數") # 可以加個小標題區隔
+        cols = st.columns(len(market_indices))
+        for i, idx in enumerate(market_indices):
+            # 設定顏色與箭頭
+            idx_color = "#ef4444" if idx['change'] > 0 else "#22c55e" if idx['change'] < 0 else "#94a3b8"
+            idx_arrow = "▲" if idx['change'] > 0 else "▼" if idx['change'] < 0 else "-"
+            
+            with cols[i]:
+                st.markdown(f"""
+                <div style="background-color: #1e293b; border: 1px solid rgba(255,255,255,0.1); padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+                    <div style="font-size: 0.8rem; color: #cbd5e1;">{idx['name']}</div>
+                    <div style="font-size: 1.1rem; font-weight: bold; color: #fff;">{idx['price']:,.2f}</div>
+                    <div style="font-size: 0.8rem; color: {idx_color};">{idx_arrow} {abs(idx['change']):.2f} ({abs(idx['pct']):.2f}%)</div>
+                </div>
+                """, unsafe_allow_html=True)
+    # ==========================================
+
+    # 4. 顯示 AI 投資顧問報告 - 保持不變
     st.markdown(f"""
     <div class="ai-report-box">
         <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
