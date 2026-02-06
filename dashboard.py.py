@@ -547,7 +547,8 @@ def load_global_market_data():
         
     return results
 
-# --- [新增] 首頁全球股市計時器區塊 ---
+# [修正] 加上這個裝飾器，讓此區塊每 1 秒獨立刷新一次
+@st.fragment(run_every=1) 
 def show_all_market_timers_block():
     st.subheader("🕰️ 全球股市即時狀態")
     # 定義要顯示的四個市場
@@ -568,7 +569,6 @@ def show_all_market_timers_block():
                 <div style="font-size:0.8rem; color:#94a3b8; margin-top:5px;">{msg}</div>
             </div>
             """, unsafe_allow_html=True)
-
 # --- [新增] 顯示大盤總覽頁面 ---
 def show_market_overview():
     st.markdown("""
