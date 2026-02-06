@@ -768,255 +768,252 @@ def show_sidebar_timers(market_type, data_fetch_time):
         """, unsafe_allow_html=True)
     else:
         st.info("等待數據載入...")
-# --- 5. 主程式 (修改版) ---
+# --- 5. 主程式 (修正縮排版) ---
 
-# 共用的自動刷新邏輯 (可以保留在最外層)
-# 這裡簡單判斷：如果是大盤模式，刷新頻率可以設固定 60秒
+# 自動刷新 (設定為 60 秒)
 st_autorefresh(interval=60000, key="data_refresh")
 
 if page_selection == "🌍 全球大盤總覽":
     show_market_overview()
     
 elif page_selection == "📈 個股詳細分析":
-    # 這裡放入您原本 Section 5 的所有邏輯
-    # 注意縮排要正確
-    
+    # 判斷是否為台股
     is_tw = "台股" in market_type
     is_open, time_msg, ai_date_str = get_market_timing_info(market_type)
     
-    # 在這裡呼叫側邊欄時間顯示 (因為需要 refresh time)
-    # 由於 load_data 還沒跑，這裡先傳 None，等跑完資料如果需要更新時間可以再思考架構
-    # 但為了簡單，您可以直接在此處顯示靜態時間狀態，或是在下方 load_data 後再次更新
+    # 第一次呼叫：顯示靜態時間 (避免畫面空白)
     show_sidebar_timers(market_type, datetime.now()) 
 
     if stock_input:
+        # 嘗試載入資料
         data = load_data(stock_input, market_type, is_tw, ai_date_str)
         
         if not data:
             st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
             st.stop()
-    show_sidebar_timers(market_type, data['fetch_time'])
-
-    df = data['df']
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-    change = last['Close'] - prev['Close']
-    pct = (change / prev['Close']) * 100
-    color = "#ef4444" if change > 0 else "#22c55e" if change < 0 else "#94a3b8"
-    arrow = "▲" if change > 0 else "▼" if change < 0 else "-"
-    
-    st.markdown(f"""
-    <div class="hero-container" style="border-top: 5px solid {color};">
-        <div style="font-size: 1.2rem; color: #94a3b8; margin-bottom: 5px;">{market_type} | {data['industry']}</div>
-        <h1 style="font-size: 3.5rem; margin: 0; font-weight: 800; color: #f8fafc;">
-            {data['name_zh']} <span style="font-size: 1.5rem; color: #64748b;">({stock_input})</span>
-        </h1>
-        <div style="display: flex; justify-content: center; align-items: baseline; gap: 20px; margin-top: 15px;">
-            <span style="font-size: 4rem; font-weight: bold; color: {color};">{last['Close']:.2f}</span>
-            <span style="font-size: 2rem; font-weight: 600; color: {color};">
-                {arrow} {abs(change):.2f} ({abs(pct):.2f}%)
-            </span>
-        </div>
-        <div style="margin-top: 15px; color: #64748b;">
-            🕒 更新時間: {data['time']} | 昨收: {prev['Close']:.2f} | 總量: {int(last['Volume']/1000):,} K
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    with st.expander("🏢 查看公司/指數簡介 (Business Summary)"):
-        st.markdown(f"<div style='line-height: 1.6; color: #e2e8f0;'>{data['summary']}</div>", unsafe_allow_html=True)
-
-    total_est_vol = data['buy_vol'] + data['sell_vol']
-    if total_est_vol > 0:
-        buy_pct = (data['buy_vol'] / total_est_vol) * 100
-        sell_pct = (data['sell_vol'] / total_est_vol) * 100
-    else:
-        buy_pct, sell_pct = 50, 50
+            
+        # --- 關鍵修正：以下所有程式碼都要縮排進 if stock_input 內 ---
         
-    c_vol1, c_vol2 = st.columns(2)
-    with c_vol1:
+        # 第二次呼叫：更新側邊欄倒數時間 (依據資料抓取時間)
+        show_sidebar_timers(market_type, data['fetch_time'])
+
+        df = data['df']
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        change = last['Close'] - prev['Close']
+        pct = (change / prev['Close']) * 100
+        color = "#ef4444" if change > 0 else "#22c55e" if change < 0 else "#94a3b8"
+        arrow = "▲" if change > 0 else "▼" if change < 0 else "-"
+        
         st.markdown(f"""
-        <div style="text-align: center; background: rgba(239, 68, 68, 0.1); padding: 15px; border-radius: 10px; border: 1px solid rgba(239, 68, 68, 0.3);">
-            <div style="color: #fca5a5; font-size: 0.9rem;">🔴 預估買盤 (主動買進)</div>
-            <div style="font-size: 1.5rem; font-weight: bold; color: #ef4444;">{int(data['buy_vol']/1000):,} K</div>
-            <div class="vol-bar-bg"><div class="vol-bar-fill" style="width: {buy_pct}%; background-color: #ef4444;"></div></div>
+        <div class="hero-container" style="border-top: 5px solid {color};">
+            <div style="font-size: 1.2rem; color: #94a3b8; margin-bottom: 5px;">{market_type} | {data['industry']}</div>
+            <h1 style="font-size: 3.5rem; margin: 0; font-weight: 800; color: #f8fafc;">
+                {data['name_zh']} <span style="font-size: 1.5rem; color: #64748b;">({stock_input})</span>
+            </h1>
+            <div style="display: flex; justify-content: center; align-items: baseline; gap: 20px; margin-top: 15px;">
+                <span style="font-size: 4rem; font-weight: bold; color: {color};">{last['Close']:.2f}</span>
+                <span style="font-size: 2rem; font-weight: 600; color: {color};">
+                    {arrow} {abs(change):.2f} ({abs(pct):.2f}%)
+                </span>
+            </div>
+            <div style="margin-top: 15px; color: #64748b;">
+                🕒 更新時間: {data['time']} | 昨收: {prev['Close']:.2f} | 總量: {int(last['Volume']/1000):,} K
+            </div>
         </div>
         """, unsafe_allow_html=True)
-    with c_vol2:
-        st.markdown(f"""
-        <div style="text-align: center; background: rgba(34, 197, 94, 0.1); padding: 15px; border-radius: 10px; border: 1px solid rgba(34, 197, 94, 0.3);">
-            <div style="color: #86efac; font-size: 0.9rem;">🟢 預估賣盤 (主動賣出)</div>
-            <div style="font-size: 1.5rem; font-weight: bold; color: #22c55e;">{int(data['sell_vol']/1000):,} K</div>
-            <div class="vol-bar-bg"><div class="vol-bar-fill" style="width: {sell_pct}%; background-color: #22c55e;"></div></div>
-        </div>
-        """, unsafe_allow_html=True)
-    st.caption("註：買賣盤數據為使用當日分時K線估算之近似值，僅供參考力道方向。")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    market_indices = get_market_indices(market_type)
-    if market_indices:
-        st.markdown(f"###### 📊 {market_type} 重點指數")
-        idx_cols = st.columns(len(market_indices))
-        for i, idx in enumerate(market_indices):
-            color = "#ef4444" if idx['change'] > 0 else "#22c55e" if idx['change'] < 0 else "#94a3b8"
-            arrow = "▲" if idx['change'] > 0 else "▼" if idx['change'] < 0 else "-"
-            with idx_cols[i]:
-                st.markdown(f"""
-                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); 
-                            padding: 10px; border-radius: 10px; text-align: center;">
-                    <div style="color: #94a3b8; font-size: 0.8rem;">{idx['name']}</div>
-                    <div style="font-size: 1.2rem; font-weight: bold; color: #f8fafc;">{idx['price']:,.2f}</div>
-                    <div style="color: {color}; font-size: 0.85rem;">
-                        {arrow} {abs(idx['change']):,.2f} ({abs(idx['pct']):.2f}%)
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div class="ai-report-box">
-        <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
-        <div class="ai-report-content">
-            {data['ai_msg']}<br><br>
-            <ul style="margin-top: 10px;">
-                <li>{data['analysis'][0]}</li>
-                <li>{data['analysis'][1]}</li>
-            </ul>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # 1. 定義 Helper 函數 (為了下方使用)
-    def card(col, title, value, delta=None, prefix="", color=None):
-        d_html = ""
-        if delta:
-            d_color = "#ef4444" if "▲" in delta else "#22c55e"
-            d_html = f'<div class="card-delta" style="color: {d_color};">{delta}</div>'
         
-        # 自訂值顏色 (若無則預設白色)
-        val_color = color if color else "#f8fafc"
-        
-        col.markdown(f"""
-        <div class="metric-card">
-            <div class="card-title">{title}</div>
-            <div class="card-value" style="color: {val_color}">{prefix}{value}</div>
-            {d_html}
-        </div>""", unsafe_allow_html=True)
+        with st.expander("🏢 查看公司/指數簡介 (Business Summary)"):
+            st.markdown(f"<div style='line-height: 1.6; color: #e2e8f0;'>{data['summary']}</div>", unsafe_allow_html=True)
 
-    # [新增] 2. 顯示 當日最高 / 當日最低 / 開盤價
-    # 這段代碼放在 AI 報告下方，一般數據卡片上方
-    st.subheader("📊 本日行情摘要")
-    c_high, c_low, c_open = st.columns(3)
-    
-    # 取得最新一筆資料
-    card(c_high, "最高價 (High)", f"{last['High']:.2f}", color="#ef4444")  # 紅色代表高點
-    card(c_low, "最低價 (Low)", f"{last['Low']:.2f}", color="#22c55e")    # 綠色代表低點
-    card(c_open, "開盤價 (Open)", f"{last['Open']:.2f}")
-
-    st.markdown("---") # 分隔線
-
-    c1, c2, c3, c4 = st.columns(4)
-    pred_diff = data['pred'] - last['Close']
-    card(c1, f"AI 預測{ai_date_str}價格", f"{data['pred']:.2f}", f"{'▲' if pred_diff>0 else '▼'} {abs((pred_diff/last['Close'])*100):.2f}%")
-    
-    pe = data['info'].get('trailingPE', 'N/A')
-    pe_str = f"{pe:.1f}" if isinstance(pe, (int, float)) else "N/A"
-    card(c2, "本益比 (P/E)", pe_str)
-    
-    dy = data['info'].get('dividendYield', 0)
-    dy_str = f"{dy*100:.2f}%" if isinstance(dy, (int, float)) else "N/A"
-    card(c3, "殖利率 (Yield)", dy_str)
-    
-    k_val, d_val = last['K'], last['D']
-    card(c4, "技術指標 (KD)", f"K{k_val:.0f}", f"{'▲' if k_val>d_val else '▼'} {'黃金交叉' if k_val>d_val else '死亡交叉'}")
-
-    st.markdown("---")
-    # 修改為：
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 技術分析", "📰 智能新聞", "💰 籌碼基本面", "🤝 同業與相關性"])
-
-    with tab1:
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="股價"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name="月線"), row=1, col=1)
-        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=['red' if r['Open'] < r['Close'] else 'green' for i, r in df.iterrows()], name="成交量"), row=2, col=1)
-        fig.update_layout(height=600, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab2:
-        if data['news']:
-            for n in data['news']:
-                st.markdown(f"""<div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #3b82f6;"><a href="{n['link']}" target="_blank" style="text-decoration: none; color: #f8fafc; font-size: 1.1rem; font-weight: 600;">{n['title']}</a><div style="color: #94a3b8; font-size: 0.85rem; margin-top: 5px;">📅 {n['time']} | 📢 {n['publisher']}</div></div>""", unsafe_allow_html=True)
-        else: st.info("暫無相關新聞")
-
-    with tab3:
-        st.subheader("📋 關鍵財務數據")
-        fund_df = pd.DataFrame(list(data['fund'].items()), columns=['指標', '數值'])
-        fund_df['數值'] = fund_df['數值'].astype(str)
-        st.dataframe(fund_df, hide_index=True, use_container_width=True)
-    with tab4:
-        st.subheader("🔗 同業股價與相關性分析")
-        st.caption("相關係數 (Correlation) 代表股價走勢的連動程度，1 為完全正相關（同漲同跌），-1 為完全負相關，0 為無關。")
-        
-        # 1. 取得同業清單
-        # 1. 取得同業清單 (新版：傳入 info 讓它自動判斷產業)
-        peers = get_peers_list(stock_input, data['info'], market_type)
-        
-        # 2. 抓取資料 (顯示載入中動畫)
-        with st.spinner('正在分析同業數據...'):
-            peer_df = load_peer_data(df, peers)
-        
-        if peer_df is not None and not peer_df.empty:
-            # 顯示相關性長條圖
-            peer_df['color'] = peer_df['corr'].apply(lambda x: '#ef4444' if x > 0 else '#22c55e')
+        total_est_vol = data['buy_vol'] + data['sell_vol']
+        if total_est_vol > 0:
+            buy_pct = (data['buy_vol'] / total_est_vol) * 100
+            sell_pct = (data['sell_vol'] / total_est_vol) * 100
+        else:
+            buy_pct, sell_pct = 50, 50
             
-            fig_corr = go.Figure()
-            fig_corr.add_trace(go.Bar(
-                x=peer_df['corr'],
-                y=peer_df['name'],
-                orientation='h',
-                marker_color=peer_df['color'],
-                text=peer_df['corr'].apply(lambda x: f"{x:.2f}"),
-                textposition='auto'
-            ))
-            fig_corr.update_layout(
-                title="與本股之價格走勢相關性 (近60日)",
-                xaxis_title="相關係數 (-1 ~ 1)",
-                yaxis={'categoryorder':'total ascending'},
-                height=400,
-                template="plotly_dark",
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig_corr, use_container_width=True)
-            
-            # 顯示同業股價卡片
-            st.markdown("###### 🏦 同業即時報價")
-            p_cols = st.columns(len(peer_df))
-            for idx, (code, row) in enumerate(peer_df.iterrows()):
-                # 若同業太多，換行顯示
-                col_idx = idx % 4 
-                if col_idx == 0 and idx > 0:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    p_cols = st.columns(4)
-                
-                with p_cols[col_idx]:
-                    p_color = "#ef4444" if row['pct'] > 0 else "#22c55e" if row['pct'] < 0 else "#94a3b8"
-                    p_arrow = "▲" if row['pct'] > 0 else "▼" if row['pct'] < 0 else ""
-                    
+        c_vol1, c_vol2 = st.columns(2)
+        with c_vol1:
+            st.markdown(f"""
+            <div style="text-align: center; background: rgba(239, 68, 68, 0.1); padding: 15px; border-radius: 10px; border: 1px solid rgba(239, 68, 68, 0.3);">
+                <div style="color: #fca5a5; font-size: 0.9rem;">🔴 預估買盤 (主動買進)</div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: #ef4444;">{int(data['buy_vol']/1000):,} K</div>
+                <div class="vol-bar-bg"><div class="vol-bar-fill" style="width: {buy_pct}%; background-color: #ef4444;"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_vol2:
+            st.markdown(f"""
+            <div style="text-align: center; background: rgba(34, 197, 94, 0.1); padding: 15px; border-radius: 10px; border: 1px solid rgba(34, 197, 94, 0.3);">
+                <div style="color: #86efac; font-size: 0.9rem;">🟢 預估賣盤 (主動賣出)</div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: #22c55e;">{int(data['sell_vol']/1000):,} K</div>
+                <div class="vol-bar-bg"><div class="vol-bar-fill" style="width: {sell_pct}%; background-color: #22c55e;"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+        st.caption("註：買賣盤數據為使用當日分時K線估算之近似值，僅供參考力道方向。")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        market_indices = get_market_indices(market_type)
+        if market_indices:
+            st.markdown(f"###### 📊 {market_type} 重點指數")
+            idx_cols = st.columns(len(market_indices))
+            for i, idx in enumerate(market_indices):
+                color = "#ef4444" if idx['change'] > 0 else "#22c55e" if idx['change'] < 0 else "#94a3b8"
+                arrow = "▲" if idx['change'] > 0 else "▼" if idx['change'] < 0 else "-"
+                with idx_cols[i]:
                     st.markdown(f"""
-                    <div style="background: rgba(255,255,255,0.05); border: 1px solid {p_color}40; 
-                                padding: 15px; border-radius: 10px; text-align: center;">
-                        <div style="font-size: 0.9rem; color: #cbd5e1; margin-bottom: 5px;">{row['name']}</div>
-                        <div style="font-size: 1.3rem; font-weight: bold; color: #f8fafc;">{row['price']:.2f}</div>
-                        <div style="color: {p_color}; font-size: 0.9rem; font-weight: 500;">
-                            {p_arrow} {abs(row['pct']):.2f}%
-                        </div>
-                        <div style="font-size: 0.8rem; color: #64748b; margin-top: 8px;">
-                            相關性: {row['corr']:.2f}
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); 
+                                padding: 10px; border-radius: 10px; text-align: center;">
+                        <div style="color: #94a3b8; font-size: 0.8rem;">{idx['name']}</div>
+                        <div style="font-size: 1.2rem; font-weight: bold; color: #f8fafc;">{idx['price']:,.2f}</div>
+                        <div style="color: {color}; font-size: 0.85rem;">
+                            {arrow} {abs(idx['change']):,.2f} ({abs(idx['pct']):.2f}%)
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-        else:
-            st.warning("⚠️ 無法取得足夠的同業數據或無相關同業清單。")
-    st.markdown("---")
-    st.markdown("""<div class="disclaimer-box">⚠️ 免責聲明：所有數據僅供參考，投資盈虧自負。</div>""", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="ai-report-box">
+            <div class="ai-report-title">🤖 AI 投資顧問報告 (Beta)</div>
+            <div class="ai-report-content">
+                {data['ai_msg']}<br><br>
+                <ul style="margin-top: 10px;">
+                    <li>{data['analysis'][0]}</li>
+                    <li>{data['analysis'][1]}</li>
+                </ul>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 1. 定義 Helper 函數
+        def card(col, title, value, delta=None, prefix="", color=None):
+            d_html = ""
+            if delta:
+                d_color = "#ef4444" if "▲" in delta else "#22c55e"
+                d_html = f'<div class="card-delta" style="color: {d_color};">{delta}</div>'
+            
+            val_color = color if color else "#f8fafc"
+            
+            col.markdown(f"""
+            <div class="metric-card">
+                <div class="card-title">{title}</div>
+                <div class="card-value" style="color: {val_color}">{prefix}{value}</div>
+                {d_html}
+            </div>""", unsafe_allow_html=True)
+
+        # 2. 顯示 當日最高 / 當日最低 / 開盤價
+        st.subheader("📊 本日行情摘要")
+        c_high, c_low, c_open = st.columns(3)
+        
+        card(c_high, "最高價 (High)", f"{last['High']:.2f}", color="#ef4444")
+        card(c_low, "最低價 (Low)", f"{last['Low']:.2f}", color="#22c55e")
+        card(c_open, "開盤價 (Open)", f"{last['Open']:.2f}")
+
+        st.markdown("---")
+
+        c1, c2, c3, c4 = st.columns(4)
+        pred_diff = data['pred'] - last['Close']
+        card(c1, f"AI 預測{ai_date_str}價格", f"{data['pred']:.2f}", f"{'▲' if pred_diff>0 else '▼'} {abs((pred_diff/last['Close'])*100):.2f}%")
+        
+        pe = data['info'].get('trailingPE', 'N/A')
+        pe_str = f"{pe:.1f}" if isinstance(pe, (int, float)) else "N/A"
+        card(c2, "本益比 (P/E)", pe_str)
+        
+        dy = data['info'].get('dividendYield', 0)
+        dy_str = f"{dy*100:.2f}%" if isinstance(dy, (int, float)) else "N/A"
+        card(c3, "殖利率 (Yield)", dy_str)
+        
+        k_val, d_val = last['K'], last['D']
+        card(c4, "技術指標 (KD)", f"K{k_val:.0f}", f"{'▲' if k_val>d_val else '▼'} {'黃金交叉' if k_val>d_val else '死亡交叉'}")
+
+        st.markdown("---")
+        
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 技術分析", "📰 智能新聞", "💰 籌碼基本面", "🤝 同業與相關性"])
+
+        with tab1:
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="股價"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name="月線"), row=1, col=1)
+            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=['red' if r['Open'] < r['Close'] else 'green' for i, r in df.iterrows()], name="成交量"), row=2, col=1)
+            fig.update_layout(height=600, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            if data['news']:
+                for n in data['news']:
+                    st.markdown(f"""<div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #3b82f6;"><a href="{n['link']}" target="_blank" style="text-decoration: none; color: #f8fafc; font-size: 1.1rem; font-weight: 600;">{n['title']}</a><div style="color: #94a3b8; font-size: 0.85rem; margin-top: 5px;">📅 {n['time']} | 📢 {n['publisher']}</div></div>""", unsafe_allow_html=True)
+            else: st.info("暫無相關新聞")
+
+        with tab3:
+            st.subheader("📋 關鍵財務數據")
+            fund_df = pd.DataFrame(list(data['fund'].items()), columns=['指標', '數值'])
+            fund_df['數值'] = fund_df['數值'].astype(str)
+            st.dataframe(fund_df, hide_index=True, use_container_width=True)
+        
+        with tab4:
+            st.subheader("🔗 同業股價與相關性分析")
+            st.caption("相關係數 (Correlation) 代表股價走勢的連動程度，1 為完全正相關（同漲同跌），-1 為完全負相關，0 為無關。")
+            
+            peers = get_peers_list(stock_input, data['info'], market_type)
+            
+            with st.spinner('正在分析同業數據...'):
+                peer_df = load_peer_data(df, peers)
+            
+            if peer_df is not None and not peer_df.empty:
+                peer_df['color'] = peer_df['corr'].apply(lambda x: '#ef4444' if x > 0 else '#22c55e')
+                
+                fig_corr = go.Figure()
+                fig_corr.add_trace(go.Bar(
+                    x=peer_df['corr'],
+                    y=peer_df['name'],
+                    orientation='h',
+                    marker_color=peer_df['color'],
+                    text=peer_df['corr'].apply(lambda x: f"{x:.2f}"),
+                    textposition='auto'
+                ))
+                fig_corr.update_layout(
+                    title="與本股之價格走勢相關性 (近60日)",
+                    xaxis_title="相關係數 (-1 ~ 1)",
+                    yaxis={'categoryorder':'total ascending'},
+                    height=400,
+                    template="plotly_dark",
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)'
+                )
+                st.plotly_chart(fig_corr, use_container_width=True)
+                
+                st.markdown("###### 🏦 同業即時報價")
+                p_cols = st.columns(len(peer_df))
+                for idx, (code, row) in enumerate(peer_df.iterrows()):
+                    col_idx = idx % 4 
+                    if col_idx == 0 and idx > 0:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        p_cols = st.columns(4)
+                    
+                    with p_cols[col_idx]:
+                        p_color = "#ef4444" if row['pct'] > 0 else "#22c55e" if row['pct'] < 0 else "#94a3b8"
+                        p_arrow = "▲" if row['pct'] > 0 else "▼" if row['pct'] < 0 else ""
+                        
+                        st.markdown(f"""
+                        <div style="background: rgba(255,255,255,0.05); border: 1px solid {p_color}40; 
+                                    padding: 15px; border-radius: 10px; text-align: center;">
+                            <div style="font-size: 0.9rem; color: #cbd5e1; margin-bottom: 5px;">{row['name']}</div>
+                            <div style="font-size: 1.3rem; font-weight: bold; color: #f8fafc;">{row['price']:.2f}</div>
+                            <div style="color: {p_color}; font-size: 0.9rem; font-weight: 500;">
+                                {p_arrow} {abs(row['pct']):.2f}%
+                            </div>
+                            <div style="font-size: 0.8rem; color: #64748b; margin-top: 8px;">
+                                相關性: {row['corr']:.2f}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.warning("⚠️ 無法取得足夠的同業數據或無相關同業清單。")
+    
+    # [新增] 若沒有輸入代碼時的歡迎畫面
+    else:
+        st.info("👈 請在左側輸入股票代碼以開始分析，或切換至「全球大盤總覽」查看市場趨勢。")
+
+st.markdown("---")
+st.markdown("""<div class="disclaimer-box">⚠️ 免責聲明：所有數據僅供參考，投資盈虧自負。</div>""", unsafe_allow_html=True)
