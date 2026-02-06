@@ -129,17 +129,22 @@ local_css()
 # --- 2. 輔助函數 ---
 
 def get_market_timing_info(market_type):
-    tz_map = { "台股": 'Asia/Taipei', "港股": 'Asia/Hong_Kong', "美股": 'America/New_York' }
+    # [修改] 新增日股時區 Asia/Tokyo
+    tz_map = { "台股": 'Asia/Taipei', "港股": 'Asia/Hong_Kong', "美股": 'America/New_York', "日股": 'Asia/Tokyo' }
     tz_name = next((v for k, v in tz_map.items() if k in market_type), 'Asia/Taipei')
     tz = pytz.timezone(tz_name)
     now = datetime.now(tz)
     
+    # [修改] 設定開盤收盤時間 (日股: 09:00 - 15:00)
     if "美股" in market_type:
         open_time = time(9, 30)
         close_time = time(16, 0)
     elif "台股" in market_type:
         open_time = time(9, 0)
         close_time = time(13, 30)
+    elif "日股" in market_type:
+        open_time = time(9, 0)
+        close_time = time(15, 0)
     else: # 港股
         open_time = time(9, 30)
         close_time = time(16, 0)
@@ -208,7 +213,9 @@ def get_market_indices(market_type):
     index_map = {
         "台股": {"加權指數 (TAIEX)": "^TWII"},
         "港股": {"恒生指數 (HSI)": "^HSI"},
-        "美股": {"道瓊工業": "^DJI", "納斯達克": "^IXIC", "標普 500": "^GSPC"}
+        "美股": {"道瓊工業": "^DJI", "納斯達克": "^IXIC", "標普 500": "^GSPC"},
+        # [修改] 新增日股指數
+        "日股": {"日經 225 (Nikkei)": "^N225"} 
     }
     target_indices = {}
     for key in index_map:
@@ -335,20 +342,20 @@ def get_peers_list(stock_code, info, market_type):
         "半導體業": ["2330.TW", "2454.TW", "2303.TW", "3711.TWO"],
         
         # --- 電腦與消費電子 (Consumer Electronics) ---
-        "consumer electronics": ["AAPL", "2317.TW", "2382.TW", "3231.TW", "MSFT"],
+        "consumer electronics": ["AAPL", "2317.TW", "2382.TW", "3231.TW", "MSFT", "6758.T"], # [修改] 加入 SONY
         "電腦及週邊設備業": ["2382.TW", "3231.TW", "2357.TW", "2324.TW"],
         "電子零組件業": ["2317.TW", "2308.TW", "3008.TW"],
 
         # --- 航運與物流 (Marine Shipping) ---
-        "marine shipping": ["2603.TW", "2609.TW", "2615.TW", "ZIM"],
+        "marine shipping": ["2603.TW", "2609.TW", "2615.TW", "ZIM", "9101.T"], # [修改] 加入 日本郵船
         "航運業": ["2603.TW", "2609.TW", "2615.TW", "2618.TW", "2610.TW"],
 
         # --- 金融銀行 (Banks & Financial) ---
-        "banks": ["2881.TW", "2882.TW", "2891.TW", "JPM", "BAC"],
+        "banks": ["2881.TW", "2882.TW", "2891.TW", "JPM", "BAC", "8306.T"], # [修改] 加入 三菱UFJ
         "金融保險業": ["2881.TW", "2882.TW", "2891.TW", "2886.TW", "2892.TW"],
 
         # --- 電動車與汽車 (Auto Manufacturers) ---
-        "auto manufacturers": ["TSLA", "2201.TW", "F", "TM"],
+        "auto manufacturers": ["TSLA", "2201.TW", "F", "TM", "7203.T"], # [修改] 加入 豐田
         "汽車工業": ["2201.TW", "2207.TW", "1319.TW"],
 
         # --- AI 與 軟體 (Software) ---
@@ -376,10 +383,12 @@ def get_peers_list(stock_code, info, market_type):
             peers.update(["^GSPC", "NVDA", "AAPL"])
         elif "港股" in market_type:
             peers.update(["^HSI", "0700.HK"])
+        elif "日股" in market_type: # [修改] 新增日股默認
+            peers.update(["^N225", "7203.T"])
 
     # 4. 移除自己 (不跟自己比) 並轉回 list
     clean_input = stock_code.upper()
-    final_peers = [p for p in peers if p.replace(".TW", "").replace(".TWO", "") not in clean_input.replace(".TW", "").replace(".TWO", "")]
+    final_peers = [p for p in peers if p.replace(".TW", "").replace(".TWO", "").replace(".T", "") not in clean_input.replace(".TW", "").replace(".TWO", "").replace(".T", "")]
     
     return list(final_peers)[:5] # 最多只取前 5 檔，避免跑太久
 # --- [遺失的函數] 抓取同業資料與計算相關性 ---
@@ -538,6 +547,28 @@ def load_global_market_data():
         
     return results
 
+# --- [新增] 首頁全球股市計時器區塊 ---
+def show_all_market_timers_block():
+    st.subheader("🕰️ 全球股市即時狀態")
+    # 定義要顯示的四個市場
+    markets = [("🇹🇼 台股", "台股"), ("🇭🇰 港股", "港股"), ("🇯🇵 日股", "日股"), ("🇺🇸 美股", "美股")]
+    cols = st.columns(4)
+    
+    for i, (label, m_type) in enumerate(markets):
+        is_open, msg, _ = get_market_timing_info(m_type)
+        color = "#22c55e" if is_open else "#ef4444" # 綠色交易中，紅色已收盤
+        status = "交易中" if is_open else "已收盤"
+        
+        # 簡單的狀態卡片
+        with cols[i]:
+            st.markdown(f"""
+            <div style="background: rgba(255,255,255,0.05); border-left: 4px solid {color}; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <div style="font-weight:bold; color:#e2e8f0; margin-bottom:5px;">{label}</div>
+                <div style="font-size:1.2rem; font-weight:bold; color:{color};">{status}</div>
+                <div style="font-size:0.8rem; color:#94a3b8; margin-top:5px;">{msg}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
 # --- [新增] 顯示大盤總覽頁面 ---
 def show_market_overview():
     st.markdown("""
@@ -546,11 +577,14 @@ def show_market_overview():
             🌍 全球市場戰情總覽
         </h1>
         <div style="color: #94a3b8; margin-top: 10px;">
-            即時監控台股、美股、港股重點指數與國際匯率走勢
+            即時監控台股、美股、港股、日股重點指數與國際匯率走勢
         </div>
     </div>
     """, unsafe_allow_html=True)
     
+    # [新增] 在最上方插入四個市場的狀態儀表板
+    show_all_market_timers_block()
+
     # 載入數據
     with st.spinner("正在連線全球交易所數據..."):
         data = load_global_market_data()
@@ -636,6 +670,9 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
     elif "港股" in market_type:
         base_code = clean_input.replace(".HK", "")
         tickers_to_try = [f"{base_code.zfill(4)}.HK"]
+    elif "日股" in market_type: # [修改] 新增日股後綴 .T 處理
+        base_code = clean_input.replace(".T", "")
+        tickers_to_try = [f"{base_code}.T"]
     else:
         tickers_to_try = [clean_input]
 
@@ -782,11 +819,13 @@ stock_input = None
 
 # --- 側邊欄邏輯 ---
 if page_selection == "📈 個股詳細分析":
-    market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
+    # [修改] 新增日股選項
+    market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股", "🇯🇵 日股"])
     # 設定預設代碼
     default_code = "2330"
     if "美股" in market_type: default_code = "NVDA"
     elif "港股" in market_type: default_code = "9988"
+    elif "日股" in market_type: default_code = "7203" # 豐田
 
     # [遺失的部分補回] 搜尋框
     with st.sidebar.expander("🔍 不知道代碼？點此搜尋"):
