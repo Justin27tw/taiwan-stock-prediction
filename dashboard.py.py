@@ -355,9 +355,19 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
     try: info = ticker.info
     except: pass
     
-    # [新增] 抓取公司/指數簡介
-    # 嘗試抓取 longBusinessSummary，若無則抓 description，再沒有則顯示預設文字
-    summary = info.get('longBusinessSummary', info.get('description', '暫無相關簡介資訊。'))
+    # [修改] 抓取公司/指數簡介並進行自動翻譯
+    raw_summary = info.get('longBusinessSummary', info.get('description', '暫無相關簡介資訊。'))
+    summary = raw_summary
+    
+    # 嘗試翻譯
+    try:
+        if raw_summary and raw_summary != '暫無相關簡介資訊。':
+            # 使用 Google Translator 翻譯成繁體中文
+            summary = GoogleTranslator(source='auto', target='zh-TW').translate(raw_summary)
+    except Exception as e:
+        # 如果翻譯失敗，就使用原文，不報錯
+        print(f"Summary Translation Error: {e}")
+        pass
 
     fundamentals = {
         '本益比 (P/E)': info.get('trailingPE', 'N/A'),
@@ -422,15 +432,14 @@ def load_data(stock_code, market_type, is_tw, ai_date_str):
         'buy_vol': buy_vol,
         'sell_vol': sell_vol,
         'fetch_time': fetch_time,
-        'summary': summary # [新增] 回傳簡介
+        'summary': summary # 回傳已翻譯的簡介
     }
 
 # --- 4. 側邊欄 ---
 st.sidebar.title("🎛️ 戰情控制中心")
 market_type = st.sidebar.selectbox("選擇市場", ["🇹🇼 台股", "🇺🇸 美股", "🇭🇰 港股"])
 
-# [重要修改] 使用 st.fragment 獨立刷新側邊欄的倒數計時器
-# run_every=1 代表這個小區塊會每秒自己刷新，但不會影響主畫面
+# [使用 st.fragment] 獨立刷新側邊欄的倒數計時器
 @st.fragment(run_every=1)
 def show_sidebar_timers(market_type, data_fetch_time):
     # 1. 市場開收盤倒數
@@ -445,7 +454,7 @@ def show_sidebar_timers(market_type, data_fetch_time):
     </div>
     """, unsafe_allow_html=True)
     
-    # 2. 數據更新倒數 (如果有傳入資料抓取時間)
+    # 2. 數據更新倒數
     if data_fetch_time:
         seconds_elapsed = (datetime.now() - data_fetch_time).total_seconds()
         seconds_remaining = int(60 - seconds_elapsed)
@@ -482,10 +491,10 @@ st.sidebar.markdown("---")
 st.sidebar.warning("⚠️ **免責聲明**\n\n本工具僅供學術研究，AI 預測與買賣盤估算僅供參考，不代表未來走勢。")
 
 # --- 5. 主程式 ---
-# [重要修改] 全頁刷新頻率改為 60秒 (為了更新數據)，而不是1秒
+# 全頁刷新頻率為 60秒 (為了更新數據)
 st_autorefresh(interval=60000, key="data_refresh")
 
-# 獲取日期字串供 AI 報告使用 (但不在此處顯示倒數)
+# 獲取日期字串供 AI 報告使用
 _, _, ai_date_str = get_market_timing_info(market_type)
 
 if stock_input:
@@ -493,12 +502,10 @@ if stock_input:
     
     if not data:
         st.error(f"❌ 找不到代碼 {stock_input}，請檢查輸入是否正確。")
-        # 即使找不到資料，也要顯示倒數計時器 (傳入 None 表示沒資料時間)
         show_sidebar_timers(market_type, None)
         st.stop()
 
-    # [重要修改] 在這裡呼叫側邊欄的 fragment 函數，傳入真正的 fetch_time
-    # 這會讓側邊欄每秒自己動，而主程式(下方圖表)保持靜止
+    # 呼叫側邊欄的 fragment 函數
     show_sidebar_timers(market_type, data['fetch_time'])
 
     df = data['df']
@@ -527,7 +534,7 @@ if stock_input:
     </div>
     """, unsafe_allow_html=True)
     
-    # [新增] 公司簡介 Expander (放在 Hero 下方)
+    # 顯示自動翻譯後的公司簡介
     with st.expander("🏢 查看公司/指數簡介 (Business Summary)"):
         st.markdown(f"<div style='line-height: 1.6; color: #e2e8f0;'>{data['summary']}</div>", unsafe_allow_html=True)
 
